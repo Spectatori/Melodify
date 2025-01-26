@@ -1,6 +1,6 @@
 import { LoaderFunctionArgs, redirect } from '@remix-run/node';
 import { useLoaderData } from '@remix-run/react';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { sessionStorage } from '~/services/session.server';
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -17,11 +17,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export default function Dashboard() {
   const user = useLoaderData<typeof loader>();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
   
   return (
     <div className='flex h-screen w-full bg-gradient-to-b from-secondary from-70% to-primary flex-col'>
       <div className='flex w-full h-14 justify-end items-center gap-1 pt-5 pr-4'>
-        <div className="relative">
+        <div className="relative" ref={dropdownRef}>
           <img 
             src={user.profileImage}
             className='rounded-full w-12 cursor-pointer hover:opacity-80 transition-opacity'
@@ -43,14 +55,13 @@ export default function Dashboard() {
               >
                 Settings
               </button>
-              <form action="/logout" method="post">
-                <button 
-                  type="submit"
-                  className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
-                >
-                  Logout
-                </button>
-              </form>
+              <button 
+                onClick={() => window.location.href = '/logout'} 
+                type="submit"
+                className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
+              >
+                Logout
+              </button>
             </div>
           )}
         </div>
@@ -58,16 +69,3 @@ export default function Dashboard() {
     </div>
   );
 }
-      {/* <h1>Welcome, {user.displayName}</h1>
-        <img 
-          src={user.profileImage}
-          className='rounded-full w-12'
-        />
-        <form action="/logout" method="post">
-        <button 
-          onClick={() => window.location.href = '/logout'} 
-          type="button"
-        >
-          Logout
-        </button>
-        </form> */}
