@@ -40,7 +40,6 @@ export default function Dashboard() {
             onClick={() => setIsDropdownOpen(!isDropdownOpen)}
             alt="Profile"
           />
-          
           {isDropdownOpen && (
             <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 ring-1 ring-black ring-opacity-5">
               <button 
@@ -64,6 +63,39 @@ export default function Dashboard() {
               </button>
             </div>
           )}
+        </div>
+      </div>
+      <div className='flex w-full h-full px-48 pt-20'>
+        <div className='flex w-1/3 flex-col'>
+          <h1 className='text-black text-3xl font-bold pb-8'>Choose your vibe</h1>
+          <div className='flex flex-col font-bold text-black text-xl max-h-72 overflow-y-auto gap-1
+          [&::-webkit-scrollbar]:w-1
+          [&::-webkit-scrollbar]:hover:w-2
+          [&::-webkit-scrollbar-track]:rounded-xl
+          [&::-webkit-scrollbar-track]:bg-secondary
+          [&::-webkit-scrollbar-thumb]:rounded-lg
+          [&::-webkit-scrollbar-thumb]:bg-primary
+          '>
+          <h2>Rock</h2>
+          <h2>Pop</h2>
+          <h2>Hip-Hop</h2>
+          <h2>Country</h2>
+          <h2>Classical</h2>
+          <h2>Electro</h2>
+          <h2>Jazz</h2>
+          <h2>Latin</h2>
+          <h2>Heavy Metal</h2>
+          <h2>K-pop</h2>
+          <h2>Funk</h2>
+          <h2>Folk</h2>
+          <h2>Gym</h2>
+        </div>
+        </div>
+        <div className='flex w-1/3 flex-col'>
+
+        </div>
+        <div className='flex w-1/3 flex-col'>
+
         </div>
       </div>
     </div>
