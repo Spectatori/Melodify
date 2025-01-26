@@ -23,7 +23,7 @@ export default function LogoutPage() {
  export const action = async ({ request }: ActionFunctionArgs) => {
   const session = await sessionStorage.getSession(request.headers.get('Cookie'));
   
-  return redirect('/login', {
+  return redirect('/', {
     headers: {
       'Set-Cookie': await sessionStorage.destroySession(session),
       'Clear-Site-Data': '"cookies", "storage"'
