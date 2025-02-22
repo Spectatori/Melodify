@@ -13,3 +13,47 @@ export const genreMap = {
   'Folk': ['Traditional', 'Contemporary', 'Celtic', 'American', 'Folk Rock', 'World Folk'],
   'Gym': ['Workout', 'Power Music', 'High Energy', 'Cardio', 'Training', 'Motivation']
 };
+export const moodOptions = [
+  'Happy', 'Energetic', 'Calm', 'Relaxed', 'Focused', 
+  'Melancholic', 'Romantic', 'Angry', 'Nostalgic', 'Uplifting',
+  'Dreamy', 'Confident', 'Emotional', 'Peaceful', 'Intense'
+];
+
+export const bpmRanges = [
+  'Very Slow (< 60 BPM)', 
+  'Slow (60-90 BPM)', 
+  'Medium (90-120 BPM)', 
+  'Fast (120-150 BPM)', 
+  'Very Fast (150+ BPM)',
+  'Variable BPM'
+];
+
+export const activityOptions = [
+  'Gym/Workout', 'Walking', 'Running', 'Cycling', 
+  'Driving', 'Commuting', 'Studying', 'Working/Focus', 
+  'Relaxing', 'Meditation', 'Party', 'Dancing',
+  'Gaming', 'Reading', 'Cooking', 'Sleeping/Bedtime'
+];
+
+export const eraOptions = [
+  'Latest Releases',
+  'Modern (2010s-Present)', 
+  'Classic (1980s-2000s)', 
+  'Vintage (1950s-1970s)',
+  'Timeless Classics',
+  'All Eras'
+];
+
+export const timeOptions = [
+  'Early Morning', 'Morning', 'Afternoon', 
+  'Evening', 'Night', 'Late Night', 'Dawn', 'Dusk'
+];
+
+export const popularityOptions = [
+  'Chart Toppers', 'Popular', 'Mainstream',
+  'Underground', 'Hidden Gems', 'Cult Classics', 'Any'
+];
+
+export const energyLevelOptions = [
+  'Very Low', 'Low', 'Moderate', 'High', 'Very High'
+];
