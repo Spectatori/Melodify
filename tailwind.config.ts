@@ -22,8 +22,9 @@ export default {
         'slide-in': 'slideIn 0.3s ease-out'
       },
       colors: {
-        primary: "#F5E23C",
-        secondary: "#30864E",
+        primary: "#007f5f",
+        secondary: "#b5179e",
+        tertiary: "#f72530",
       },
       fontFamily: {
         sans: [
