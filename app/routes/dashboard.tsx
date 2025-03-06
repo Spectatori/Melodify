@@ -78,11 +78,25 @@ export default function Dashboard() {
     
     prompt += `. Format as a numbered list of 5 songs with artist names.`;
     
-    console.log("Submitting Llama request with prompt:", prompt);
+    console.log("Submitting Enhanced Llama request with prompt:", prompt);
     setIsLoading(true);
     
+    // Create form data with all the selected filters
+    const formData = new FormData();
+    formData.append("prompt", prompt);
+    
+    // Add all the filter options to help with Last.fm context building
+    if (selectedGenre) formData.append("genre", selectedGenre);
+    if (selectedSubgenre) formData.append("subgenre", selectedSubgenre);
+    if (selectedMood) formData.append("mood", selectedMood);
+    if (selectedBPM) formData.append("bpm", selectedBPM);
+    if (selectedActivity) formData.append("activity", selectedActivity);
+    if (selectedEra) formData.append("era", selectedEra);
+    if (selectedTimeOfDay) formData.append("timeOfDay", selectedTimeOfDay);
+    if (useWeather && weatherData) formData.append("weather", weatherData.condition);
+    
     llamaFetcher.submit(
-      { prompt }, 
+      formData, 
       { 
         method: "post", 
         action: "/api/llama" 
@@ -259,17 +273,17 @@ export default function Dashboard() {
   );
   
   const LoadingIndicator = () => (
-    <div className="fixed bottom-4 right-4 bg-white/20 backdrop-blur-md px-4 py-2 rounded-lg ring-1 ring-white/30 shadow-lg
+    <div className="fixed bottom-4 right-10 bg-white/20 backdrop-blur-md px-4 py-2 rounded-lg ring-1 ring-white/30 shadow-lg
      animate-pulse">
       <div className="flex items-center space-x-2">
         <div className="w-4 h-4 rounded-full bg-white animate-bounce"></div>
-        <p className="text-white">Loading response from Llama...</p>
+        <p className="text-white">Loading recommendations...</p>
       </div>
     </div>
   );
   
   return (
-    <div className='flex h-screen w-full bg-gradient-to-br from-orange-400 via-pink-400 to-purple-400 flex-col overflow-auto'>
+    <div className='flex h-screen w-full bg-gradient-to-br from-primary via-pink-400 via-70% to-tertiar flex-col overflow-auto'>
       <UserMenu profileImage={user.profileImage} />
       
       <div className='flex w-full px-10 pt-10 pb-20 flex-col'>

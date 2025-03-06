@@ -1,18 +1,21 @@
 export const genreMap = {
-  'Rock': ['Alternative', 'Classic Rock', 'Indie Rock', 'Progressive Rock', 'Punk Rock', 'Soft Rock'],
-  'Pop': ['Dance Pop', 'Indie Pop', 'K-pop', 'Synth-pop', 'Pop Rock', 'Traditional Pop'],
-  'Hip-Hop': ['Trap', 'Rap', 'Old School', 'Underground', 'Alternative Hip Hop', 'Pop Rap'],
-  'Country': ['Traditional', 'Modern', 'Bluegrass', 'Country Pop', 'Country Rock', 'Western'],
-  'Classical': ['Baroque', 'Classical Period', 'Romantic', 'Contemporary', 'Opera', 'Chamber Music'],
-  'Electro': ['House', 'Techno', 'Trance', 'Dubstep', 'Ambient', 'EDM'],
-  'Jazz': ['Bebop', 'Swing', 'Cool Jazz', 'Free Jazz', 'Fusion', 'Latin Jazz'],
-  'Latin': ['Salsa', 'Reggaeton', 'Bachata', 'Latin Pop', 'Latin Rock', 'Merengue'],
-  'Heavy Metal': ['Black Metal', 'Death Metal', 'Thrash Metal', 'Power Metal', 'Nu Metal', 'Gothic Metal'],
-  'K-pop': ['Boy Groups', 'Girl Groups', 'Solo Artists', 'K-rap', 'K-rock', 'K-indie'],
-  'Funk': ['P-Funk', 'Deep Funk', 'Funk Rock', 'G-Funk', 'Jazz-Funk', 'Soul Funk'],
-  'Folk': ['Traditional', 'Contemporary', 'Celtic', 'American', 'Folk Rock', 'World Folk'],
-  'Gym': ['Workout', 'Power Music', 'High Energy', 'Cardio', 'Training', 'Motivation']
+  'Rock': ['Alternative Rock', 'Classic Rock', 'Indie Rock', 'Progressive Rock', 'Punk Rock', 'Hard Rock', 'Post-Rock', 'Psychedelic Rock'],
+  'Pop': ['Indie Pop', 'Synth-pop', 'K-pop', 'Dream Pop', 'Electropop', 'Pop Rock', 'Dance Pop'],
+  'Electronic': ['House', 'Techno', 'Trance', 'Dubstep', 'Ambient', 'Drum and Bass', 'IDM', 'Synthwave'],
+  'Hip-Hop': ['Rap', 'Trap', 'Alternative Hip Hop', 'Old School Hip Hop', 'Conscious Hip Hop', 'Boom Bap'],
+  'Metal': ['Heavy Metal', 'Black Metal', 'Death Metal', 'Thrash Metal', 'Doom Metal', 'Power Metal', 'Metalcore'],
+  'Jazz': ['Bebop', 'Cool Jazz', 'Fusion', 'Free Jazz', 'Smooth Jazz', 'Modal Jazz'],
+  'Folk': ['Indie Folk', 'Folk Rock', 'Traditional Folk', 'Singer-Songwriter', 'Americana'],
+  'R&B': ['Soul', 'Neo Soul', 'Contemporary R&B', 'Funk', 'Motown'],
+  'Classical': ['Baroque', 'Romantic', 'Contemporary Classical', 'Minimalist', 'Chamber Music', 'Opera'],
+  'Country': ['Alternative Country', 'Country Rock', 'Bluegrass', 'Country Pop', 'Outlaw Country'],
+  'Blues': ['Chicago Blues', 'Delta Blues', 'Electric Blues', 'Blues Rock'],
+  'Reggae': ['Dub', 'Dancehall', 'Roots Reggae', 'Ska'],
+  'Punk': ['Post-Punk', 'Hardcore Punk', 'Pop Punk', 'Emo', 'Skate Punk'],
+  'Indie': ['Indie Rock', 'Indie Pop', 'Indie Folk', 'Shoegaze', 'Indie Electronic'],
+  'Alternative': ['Alternative Rock', 'Post-Punk', 'Grunge', 'Britpop', 'Lo-fi']
 };
+
 export const moodOptions = [
   'Happy', 'Energetic', 'Calm', 'Relaxed', 'Focused', 
   'Melancholic', 'Romantic', 'Angry', 'Nostalgic', 'Uplifting',
@@ -37,13 +40,15 @@ export const activityOptions = [
 
 export const eraOptions = [
   'Latest Releases',
-  'Modern (2010s-Present)', 
-  'Classic (1980s-2000s)', 
-  'Vintage (1950s-1970s)',
-  'Timeless Classics',
-  'All Eras'
+  '2020s', 
+  '2010s',
+  '2000s',
+  '1990s',
+  '1980s',
+  '1970s',
+  '1960s',
+  '1950s'
 ];
-
 export const timeOptions = [
   'Early Morning', 'Morning', 'Afternoon', 
   'Evening', 'Night', 'Late Night', 'Dawn', 'Dusk'
