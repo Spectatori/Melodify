@@ -1,3 +1,3 @@
-import {action } from "../services/llama.server";
+import { action } from "../services/llama.server";
 
 export { action };
