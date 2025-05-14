@@ -9,7 +9,9 @@ import { genreMap,
   bpmRanges, 
   activityOptions, 
   eraOptions, 
-  timeOptions,} from '~/data/optionMap';
+  timeOptions } from '~/data/optionMap';
+import { fetchWeather, WeatherResponse } from '~/services/weather.api';
+
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -29,20 +31,26 @@ export default function Dashboard() {
   const [selectedEra, setSelectedEra] = useState<string | null>(null);
   const [selectedTimeOfDay, setSelectedTimeOfDay] = useState<string | null>(null);
   const [useWeather, setUseWeather] = useState(false);
-  const [weatherData, setWeatherData] = useState<any>(null);
+  const [weatherData, setWeatherData] = useState<WeatherResponse | null>(null);
+  const [isLoadingWeather, setIsLoadingWeather] = useState(false);
   const [aiResponse, setAiResponse] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [recommendations, setRecommendations] = useState<string[]>([]);
   const [showAdditionalOptions, setShowAdditionalOptions] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
   interface FetcherData {
     content: string;
     error?: string;
+    warning?: string;
   }
 
   const llamaFetcher = useFetcher<FetcherData>();
   
   const handleLlamaClick = () => {
+    // Reset any previous error message
+    setErrorMessage(null);
+    
     // Build a more detailed prompt based on all selected filters
     let prompt = `Suggest me some Spotify songs`;
     
@@ -65,7 +73,7 @@ export default function Dashboard() {
     }
     
     if (selectedEra) {
-      prompt += ` from the ${selectedEra} songs`;
+      prompt += ` from the ${selectedEra}`;
     }
     
     if (selectedTimeOfDay) {
@@ -104,31 +112,67 @@ export default function Dashboard() {
     );
   };
   
-  // Weather API fetch (placeholder)
+  // Weather API fetch using our utility
   useEffect(() => {
-    const fetchWeather = async () => {
+    const getWeatherData = async () => {
       try {
-        setWeatherData({
-          temperature: 3,
-          condition: 'Rainy',
-          location: 'Current Location'
-        });
+        setIsLoadingWeather(true);
+        
+        // Use the browser's geolocation API to get user's coordinates
+        navigator.geolocation.getCurrentPosition(
+          async (position) => {
+            try {
+              const { latitude, longitude } = position.coords;
+              const weatherData = await fetchWeather(latitude, longitude);
+              setWeatherData(weatherData);
+            } catch (error) {
+              console.error("Error fetching weather with user location:", error);
+              // Fall back to default location (Sofia)
+              const weatherData = await fetchWeather();
+              setWeatherData(weatherData);
+            } finally {
+              setIsLoadingWeather(false);
+            }
+          },
+          async (error) => {
+            console.warn("Geolocation error:", error);
+            // Fall back to default location if user denies location access
+            const weatherData = await fetchWeather();
+            setWeatherData(weatherData);
+            setIsLoadingWeather(false);
+          }
+        );
       } catch (error) {
-        console.error('Error fetching weather:', error);
+        console.error("Weather fetching error:", error);
+        setWeatherData({
+          temperature: 20,
+          condition: 'Pleasant',
+          location: 'Default Location'
+        });
+        setIsLoadingWeather(false);
       }
     };
     
-    fetchWeather();
+    getWeatherData();
   }, []);
   
   useEffect(() => {
     if (llamaFetcher.state === 'idle' && llamaFetcher.data) {
       setIsLoading(false);
       console.log("Llama Fetcher data:", llamaFetcher.data);
+      
       if (llamaFetcher.data.error) {
         console.error("Error:", llamaFetcher.data.error);
+        setErrorMessage(llamaFetcher.data.error);
       } else if (llamaFetcher.data.content) {
         setAiResponse(llamaFetcher.data.content);
+        
+        // Display warning if present
+        if (llamaFetcher.data.warning) {
+          setErrorMessage(llamaFetcher.data.warning);
+        } else {
+          setErrorMessage(null);
+        }
         
         // Parse the response into an array of songs
         const songList = llamaFetcher.data.content
@@ -169,6 +213,7 @@ export default function Dashboard() {
             setSelectedSubgenre(null);
             setAiResponse(null);
             setRecommendations([]);
+            setErrorMessage(null);
           }}
         >
           {genre}
@@ -206,6 +251,7 @@ export default function Dashboard() {
               setSelectedSubgenre(subgenre === selectedSubgenre ? null : subgenre);
               setAiResponse(null);
               setRecommendations([]);
+              setErrorMessage(null);
             }}
           >
             {subgenre}
@@ -240,7 +286,12 @@ export default function Dashboard() {
             }}
             className={`cursor-pointer p-2 px-3 rounded-lg transition-all duration-300 hover:bg-white/20 text-white
               ${selectedValue === option ? 'bg-white/30 shadow-lg ring-1 ring-white/40 font-bold scale-105' : 'text-white/90'}`}
-            onClick={() => onSelect(selectedValue === option ? '' : option)}
+            onClick={() => {
+              onSelect(selectedValue === option ? '' : option);
+              setAiResponse(null);
+              setRecommendations([]);
+              setErrorMessage(null);
+            }}
           >
             {option}
           </div>
@@ -253,6 +304,13 @@ export default function Dashboard() {
     <div className='mt-6 bg-white/20 backdrop-blur-md rounded-xl p-6 ring-1 ring-white/30 shadow-xl
       hover:shadow-2xl transition-all duration-300 w-full max-w-3xl mx-auto'>
       <h3 className='text-white font-bold text-2xl mb-4'>Your Personalized Recommendations</h3>
+      
+      {errorMessage && (
+        <div className="mb-4 py-2 px-4 bg-white/20 rounded-lg text-white/90 text-sm">
+          {errorMessage}
+        </div>
+      )}
+      
       <ul className='text-white text-lg space-y-3'>
         {recommendations.map((song, index) => (
           <li 
@@ -382,14 +440,19 @@ export default function Dashboard() {
                 {weatherData && (
                   <div className='text-white mt-2 pl-2 flex items-center'>
                     <div className="mr-2">
-                      {weatherData.condition === 'Sunny' ? '☀️' : 
-                       weatherData.condition === 'Rainy' ? '🌧️' : 
-                       weatherData.condition === 'Cloudy' ? '☁️' : '🌤️'}
+                      {weatherData.condition === 'Sunny' || weatherData.condition === 'Clear' ? '☀️' : 
+                       weatherData.condition === 'Rainy' || weatherData.condition === 'Stormy' ? '🌧️' : 
+                       weatherData.condition === 'Cloudy' ? '☁️' : 
+                       weatherData.condition === 'Snowy' ? '❄️' : 
+                       weatherData.condition === 'Cold' ? '🥶' : '🌤️'}
                     </div>
                     <div>
                       <p className='text-lg'>{weatherData.temperature}°C - {weatherData.condition}</p>
                       <p className='text-white/80 text-sm'>{weatherData.location}</p>
                     </div>
+                    {isLoadingWeather && (
+                      <div className="ml-2 w-3 h-3 rounded-full bg-white animate-pulse"></div>
+                    )}
                   </div>
                 )}
               </div>
