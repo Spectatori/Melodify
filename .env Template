@@ -1,0 +1,13 @@
+# Last.fm API Key
+LASTFM_API_KEY=your_lastfm_api_key_here
+
+# Spotify API Credentials
+SPOTIFY_CLIENT_ID=your_spotify_client_id_here
+SPOTIFY_CLIENT_SECRET=your_spotify_client_secret_here
+SPOTIFY_CALLBACK_URL=http://localhost:3000/auth/spotify/callback
+
+# Optional OpenAI API Key (if you're using it)
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Session Secret (for secure cookies)
+SESSION_SECRET=your_secure_random_string_here
