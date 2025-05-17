@@ -13,7 +13,6 @@ import { genreMap,
 import { fetchWeather, WeatherResponse } from '~/services/weather.api';
 
 
-
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const session = await sessionStorage.getSession(request.headers.get('Cookie'));
   const user = session.get('user');
@@ -119,15 +118,17 @@ export default function Dashboard() {
         setIsLoadingWeather(true);
         
         // Use the browser's geolocation API to get user's coordinates
+        // with maximumAge: 0 to force a fresh location reading
         navigator.geolocation.getCurrentPosition(
           async (position) => {
             try {
               const { latitude, longitude } = position.coords;
+              console.log(`Got user coordinates: ${latitude}, ${longitude}`);
               const weatherData = await fetchWeather(latitude, longitude);
               setWeatherData(weatherData);
             } catch (error) {
               console.error("Error fetching weather with user location:", error);
-              // Fall back to default location (Sofia)
+              // Fall back to default location
               const weatherData = await fetchWeather();
               setWeatherData(weatherData);
             } finally {
@@ -140,6 +141,14 @@ export default function Dashboard() {
             const weatherData = await fetchWeather();
             setWeatherData(weatherData);
             setIsLoadingWeather(false);
+          },
+          {
+            // Force fresh location reading (don't use cached values)
+            maximumAge: 0,
+            // High accuracy for better results
+            enableHighAccuracy: true,
+            // Timeout after 10 seconds
+            timeout: 10000
           }
         );
       } catch (error) {
@@ -437,24 +446,64 @@ export default function Dashboard() {
                       peer-checked:bg-pink-500"></div>
                   </label>
                 </div>
-                {weatherData && (
-                  <div className='text-white mt-2 pl-2 flex items-center'>
-                    <div className="mr-2">
-                      {weatherData.condition === 'Sunny' || weatherData.condition === 'Clear' ? '☀️' : 
-                       weatherData.condition === 'Rainy' || weatherData.condition === 'Stormy' ? '🌧️' : 
-                       weatherData.condition === 'Cloudy' ? '☁️' : 
-                       weatherData.condition === 'Snowy' ? '❄️' : 
-                       weatherData.condition === 'Cold' ? '🥶' : '🌤️'}
+                <div className='flex justify-between items-center'>
+                  {weatherData && (
+                    <div className='text-white mt-2 pl-2 flex items-center'>
+                      <div className="mr-2 text-xl">
+                        {weatherData.condition === 'Sunny' || weatherData.condition === 'Clear' ? '☀️' : 
+                         weatherData.condition === 'Rainy' || weatherData.condition === 'Stormy' ? '🌧️' : 
+                         weatherData.condition === 'Cloudy' ? '☁️' : 
+                         weatherData.condition === 'Snowy' ? '❄️' : 
+                         weatherData.condition === 'Cold' ? '🥶' : '🌤️'}
+                      </div>
+                      <div>
+                        <p className='text-lg'>{weatherData.temperature}°C - {weatherData.condition}</p>
+                        <p className='text-white/80 text-sm'>{weatherData.location}</p>
+                      </div>
+                      {isLoadingWeather && (
+                        <div className="ml-2 w-3 h-3 rounded-full bg-white animate-pulse"></div>
+                      )}
                     </div>
-                    <div>
-                      <p className='text-lg'>{weatherData.temperature}°C - {weatherData.condition}</p>
-                      <p className='text-white/80 text-sm'>{weatherData.location}</p>
-                    </div>
-                    {isLoadingWeather && (
-                      <div className="ml-2 w-3 h-3 rounded-full bg-white animate-pulse"></div>
-                    )}
-                  </div>
-                )}
+                  )}
+                  
+                  <button 
+                    onClick={() => {
+                      setIsLoadingWeather(true);
+                      
+                      // Request new location and weather data
+                      navigator.geolocation.getCurrentPosition(
+                        async (position) => {
+                          try {
+                            const { latitude, longitude } = position.coords;
+                            console.log(`Got refreshed coordinates: ${latitude}, ${longitude}`);
+                            const weatherData = await fetchWeather(latitude, longitude);
+                            setWeatherData(weatherData);
+                          } catch (error) {
+                            console.error("Error refreshing weather:", error);
+                          } finally {
+                            setIsLoadingWeather(false);
+                          }
+                        },
+                        (error) => {
+                          console.warn("Geolocation refresh error:", error);
+                          setIsLoadingWeather(false);
+                        },
+                        {
+                          maximumAge: 0,
+                          enableHighAccuracy: true,
+                          timeout: 10000
+                        }
+                      );
+                    }}
+                    disabled={isLoadingWeather}
+                    className="ml-2 p-2 text-white/80 hover:text-white rounded-full hover:bg-white/10 transition-all"
+                    title="Refresh weather data"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className={`h-5 w-5 ${isLoadingWeather ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
           )}
