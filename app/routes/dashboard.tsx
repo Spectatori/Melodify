@@ -1,8 +1,9 @@
-import { LoaderFunctionArgs, redirect } from '@remix-run/node';
+import { LoaderFunctionArgs, redirect, ActionFunctionArgs } from '@remix-run/node';
 import { useLoaderData } from '@remix-run/react';
 import { useState, useEffect } from 'react';
 import { sessionStorage } from '~/services/session.server';
 import { useFetcher } from "@remix-run/react";
+import { Link } from "@remix-run/react";
 import UserMenu from '~/components/layout/UserMenu';
 import { genreMap, 
   moodOptions, 
@@ -11,17 +12,69 @@ import { genreMap,
   eraOptions, 
   timeOptions } from '~/data/optionMap';
 import { fetchWeather, WeatherResponse } from '~/services/weather.api';
+import { savePlaylist, getUserPlaylists } from '~/services/playlist.server';
 
+interface PlaylistRecommendation {
+  id: string;
+  name: string;
+  description: string;
+  songs: string[];
+  createdAt: string;
+  userId: string;
+  filters: {
+    genre?: string;
+    subgenre?: string;
+    mood?: string;
+    bpm?: string;
+    activity?: string;
+    era?: string;
+    timeOfDay?: string;
+    weather?: string;
+  };
+}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const session = await sessionStorage.getSession(request.headers.get('Cookie'));
   const user = session.get('user');
   if (!user) return redirect('/login');
-  return user;
+  
+  // Get user's existing playlists
+  const existingPlaylists = getUserPlaylists(user.id);
+  
+  return { user, existingPlaylists };
+};
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const session = await sessionStorage.getSession(request.headers.get('Cookie'));
+  const user = session.get('user');
+  if (!user) return redirect('/login');
+  
+  const formData = await request.formData();
+  const actionType = formData.get('actionType')?.toString();
+  
+  if (actionType === 'savePlaylist') {
+    const playlistData = formData.get('playlistData')?.toString();
+    if (!playlistData) {
+      return { error: 'No playlist data provided' };
+    }
+    
+    try {
+      const playlist: PlaylistRecommendation = JSON.parse(playlistData);
+      playlist.userId = user.id; // Ensure playlist is associated with current user
+      
+      const savedPlaylist = savePlaylist(playlist);
+      return { success: true, playlist: savedPlaylist };
+    } catch (error) {
+      console.error('Error saving playlist:', error);
+      return { error: 'Failed to save playlist' };
+    }
+  }
+  
+  return { error: 'Invalid action' };
 };
 
 export default function Dashboard() {
-  const user = useLoaderData<typeof loader>();
+  const { user, existingPlaylists } = useLoaderData<{ user: any; existingPlaylists: PlaylistRecommendation[] }>();
   const [selectedGenre, setSelectedGenre] = useState<string | null>(null);
   const [selectedSubgenre, setSelectedSubgenre] = useState<string | null>(null);
   const [selectedMood, setSelectedMood] = useState<string | null>(null);
@@ -32,9 +85,8 @@ export default function Dashboard() {
   const [useWeather, setUseWeather] = useState(false);
   const [weatherData, setWeatherData] = useState<WeatherResponse | null>(null);
   const [isLoadingWeather, setIsLoadingWeather] = useState(false);
-  const [aiResponse, setAiResponse] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [recommendations, setRecommendations] = useState<string[]>([]);
+  const [playlists, setPlaylists] = useState<PlaylistRecommendation[]>(existingPlaylists || []);
   const [showAdditionalOptions, setShowAdditionalOptions] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
@@ -45,13 +97,16 @@ export default function Dashboard() {
   }
 
   const llamaFetcher = useFetcher<FetcherData>();
+  const saveFetcher = useFetcher<{ error?: string; success?: boolean; playlist?: PlaylistRecommendation }>();
   
   const handleLlamaClick = () => {
     // Reset any previous error message
     setErrorMessage(null);
+    // Reset any previous error message
+    setErrorMessage(null);
     
     // Build a more detailed prompt based on all selected filters
-    let prompt = `Suggest me some Spotify songs`;
+    let prompt = `Create a playlist of Spotify songs`;
     
     if (selectedSubgenre) {
       prompt += ` in the ${selectedSubgenre} subgenre of ${selectedGenre} music`;
@@ -83,7 +138,7 @@ export default function Dashboard() {
       prompt += ` that matches ${weatherData.condition} weather`;
     }
     
-    prompt += `. Format as a numbered list of 5 songs with artist names.`;
+    prompt += `. Format as a numbered list of 15-20 songs with artist names.`;
     
     console.log("Submitting Enhanced Llama request with prompt:", prompt);
     setIsLoading(true);
@@ -174,7 +229,6 @@ export default function Dashboard() {
         console.error("Error:", llamaFetcher.data.error);
         setErrorMessage(llamaFetcher.data.error);
       } else if (llamaFetcher.data.content) {
-        setAiResponse(llamaFetcher.data.content);
         
         // Display warning if present
         if (llamaFetcher.data.warning) {
@@ -189,10 +243,112 @@ export default function Dashboard() {
           .filter(line => line.trim().match(/^\d+\.\s/))
           .map(line => line.trim());
         
-        setRecommendations(songList);
+        // Create a new playlist recommendation
+        const newPlaylist: PlaylistRecommendation = {
+          id: Date.now().toString(),
+          name: generatePlaylistName(),
+          description: generatePlaylistDescription(),
+          songs: songList,
+          createdAt: new Date().toISOString(),
+          userId: user.id,
+          filters: {
+            genre: selectedGenre || undefined,
+            subgenre: selectedSubgenre || undefined,
+            mood: selectedMood || undefined,
+            bpm: selectedBPM || undefined,
+            activity: selectedActivity || undefined,
+            era: selectedEra || undefined,
+            timeOfDay: selectedTimeOfDay || undefined,
+            weather: useWeather && weatherData ? weatherData.condition : undefined,
+          }
+        };
+        
+        // Save playlist to server
+        const formData = new FormData();
+        formData.append('actionType', 'savePlaylist');
+        formData.append('playlistData', JSON.stringify(newPlaylist));
+        
+        saveFetcher.submit(formData, { method: 'post' });
+        
+        // Add to local playlists array immediately for better UX
+        setPlaylists(prev => [newPlaylist, ...prev]);
       }
     }
   }, [llamaFetcher]);
+  
+  // Handle save playlist response
+  useEffect(() => {
+    if (saveFetcher.state === 'idle' && saveFetcher.data) {
+      if (saveFetcher.data.error) {
+        console.error("Error saving playlist:", saveFetcher.data.error);
+        setErrorMessage(saveFetcher.data.error);
+      } else if (saveFetcher.data.success) {
+        console.log("Playlist saved successfully");
+      }
+    }
+  }, [saveFetcher]);
+  
+  const generatePlaylistName = () => {
+    let name = "";
+    
+    if (selectedMood) {
+      name += `${selectedMood} `;
+    }
+    
+    if (selectedSubgenre) {
+      name += `${selectedSubgenre} `;
+    } else if (selectedGenre) {
+      name += `${selectedGenre} `;
+    }
+    
+    if (selectedActivity) {
+      name += `for ${selectedActivity} `;
+    }
+    
+    if (selectedTimeOfDay) {
+      name += `(${selectedTimeOfDay}) `;
+    }
+    
+    if (useWeather && weatherData) {
+      name += `${weatherData.condition} Weather `;
+    }
+    
+    name += "Mix";
+    
+    return name.trim();
+  };
+  
+  const generatePlaylistDescription = () => {
+    let description = "A personalized playlist";
+    
+    if (selectedGenre) {
+      description += ` featuring ${selectedGenre}`;
+      if (selectedSubgenre) {
+        description += ` (${selectedSubgenre})`;
+      }
+      description += " music";
+    }
+    
+    if (selectedMood) {
+      description += ` with a ${selectedMood} vibe`;
+    }
+    
+    if (selectedEra) {
+      description += ` from the ${selectedEra}`;
+    }
+    
+    if (selectedActivity) {
+      description += ` perfect for ${selectedActivity}`;
+    }
+    
+    if (useWeather && weatherData) {
+      description += ` matching ${weatherData.condition} weather in ${weatherData.location}`;
+    }
+    
+    description += ". Generated by your music AI assistant.";
+    
+    return description;
+  };
   
   // The GenreSelector component
   const GenreSelector = () => (
@@ -220,8 +376,6 @@ export default function Dashboard() {
           onClick={() => {
             setSelectedGenre(genre);
             setSelectedSubgenre(null);
-            setAiResponse(null);
-            setRecommendations([]);
             setErrorMessage(null);
           }}
         >
@@ -258,8 +412,6 @@ export default function Dashboard() {
               ${selectedSubgenre === subgenre ? 'bg-white/30 text-white shadow-lg ring-1 ring-white/40 scale-105' : ''}`}
             onClick={() => {
               setSelectedSubgenre(subgenre === selectedSubgenre ? null : subgenre);
-              setAiResponse(null);
-              setRecommendations([]);
               setErrorMessage(null);
             }}
           >
@@ -297,8 +449,6 @@ export default function Dashboard() {
               ${selectedValue === option ? 'bg-white/30 shadow-lg ring-1 ring-white/40 font-bold scale-105' : 'text-white/90'}`}
             onClick={() => {
               onSelect(selectedValue === option ? '' : option);
-              setAiResponse(null);
-              setRecommendations([]);
               setErrorMessage(null);
             }}
           >
@@ -309,10 +459,9 @@ export default function Dashboard() {
     </div>
   );
   
-  const RecommendationsList = () => (
-    <div className='mt-6 bg-white/20 backdrop-blur-md rounded-xl p-6 ring-1 ring-white/30 shadow-xl
-      hover:shadow-2xl transition-all duration-300 w-full max-w-3xl mx-auto'>
-      <h3 className='text-white font-bold text-2xl mb-4'>Your Personalized Recommendations</h3>
+  const PlaylistsList = () => (
+    <div className='mt-6 w-full max-w-4xl mx-auto'>
+      <h3 className='text-white font-bold text-2xl mb-4'>Your Generated Playlists</h3>
       
       {errorMessage && (
         <div className="mb-4 py-2 px-4 bg-white/20 rounded-lg text-white/90 text-sm">
@@ -320,22 +469,55 @@ export default function Dashboard() {
         </div>
       )}
       
-      <ul className='text-white text-lg space-y-3'>
-        {recommendations.map((song, index) => (
-          <li 
-            key={index} 
-            className='py-3 px-4 border-b border-white/10 last:border-0 hover:bg-white/10 rounded-lg transition-all duration-300
-              hover:translate-x-1 hover:shadow-md'
-            style={{ 
-              animation: 'fadeIn 0.5s ease-out forwards',
-              animationDelay: `${index * 100}ms`,
-              opacity: '0'
-            }}
+      <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
+        {playlists.map((playlist, index) => (
+          <Link 
+            key={playlist.id}
+            to={`/playlist/${playlist.id}`}
+            className='block'
           >
-            {song}
-          </li>
+            <div 
+              className='bg-white/20 backdrop-blur-md rounded-xl p-6 ring-1 ring-white/30 shadow-xl
+                hover:shadow-2xl transition-all duration-300 hover:bg-white/30 hover:scale-105 cursor-pointer'
+              style={{ 
+                animation: 'fadeIn 0.5s ease-out forwards',
+                animationDelay: `${index * 100}ms`,
+                opacity: '0'
+              }}
+            >
+              <div className="flex items-start justify-between mb-3">
+                <h4 className='text-white font-bold text-lg line-clamp-2'>{playlist.name}</h4>
+                <div className="text-white/60 text-2xl">🎵</div>
+              </div>
+              
+              <p className='text-white/80 text-sm mb-3 line-clamp-2'>{playlist.description}</p>
+              
+              <div className="flex items-center justify-between text-white/60 text-xs">
+                <span>{playlist.songs.length} songs</span>
+                <span>{new Date(playlist.createdAt).toLocaleDateString()}</span>
+              </div>
+              
+              <div className="mt-3 flex flex-wrap gap-1">
+                {playlist.filters.genre && (
+                  <span className="bg-white/20 px-2 py-1 rounded text-xs text-white">
+                    {playlist.filters.genre}
+                  </span>
+                )}
+                {playlist.filters.mood && (
+                  <span className="bg-white/20 px-2 py-1 rounded text-xs text-white">
+                    {playlist.filters.mood}
+                  </span>
+                )}
+                {playlist.filters.era && (
+                  <span className="bg-white/20 px-2 py-1 rounded text-xs text-white">
+                    {playlist.filters.era}
+                  </span>
+                )}
+              </div>
+            </div>
+          </Link>
         ))}
-      </ul>
+      </div>
     </div>
   );
   
@@ -344,7 +526,7 @@ export default function Dashboard() {
      animate-pulse">
       <div className="flex items-center space-x-2">
         <div className="w-4 h-4 rounded-full bg-white animate-bounce"></div>
-        <p className="text-white">Loading recommendations...</p>
+        <p className="text-white">Creating playlist...</p>
       </div>
     </div>
   );
@@ -355,7 +537,7 @@ export default function Dashboard() {
       
       <div className='flex w-full px-10 pt-10 pb-20 flex-col'>
         <h1 className='text-white text-4xl font-bold pb-8 drop-shadow-lg animate-slide-in flex items-center'>
-          <span className="mr-2">✨</span> Choose your vibe
+          <span className="mr-2">🎵</span> Create your playlist
         </h1>
         
         <div className='flex flex-wrap gap-8'>
@@ -519,12 +701,12 @@ export default function Dashboard() {
             onClick={handleLlamaClick}
             disabled={!selectedGenre || isLoading}
           >
-            {isLoading ? 'Getting recommendations...' : '🎵 Get Song Recommendations'}
+            {isLoading ? 'Creating playlist...' : '🎵 Generate Playlist'}
           </button>
         </div>
         
-        {/* Recommendations display */}
-        {recommendations.length > 0 && <RecommendationsList />}
+        {/* Playlists display */}
+        {playlists.length > 0 && <PlaylistsList />}
       </div>
       
       {isLoading && <LoadingIndicator />}
@@ -564,6 +746,13 @@ export default function Dashboard() {
         
         .scale-102 {
           transform: scale(1.02);
+        }
+        
+        .line-clamp-2 {
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
         }
       `}</style>
     </div>

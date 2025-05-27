@@ -229,7 +229,7 @@ async function searchSpotifyByGenre(genre: string, limit = 50, era?: string): Pr
     console.log(`Extracted ${tracks.length} tracks from ${searchQuery} playlist`);
     
     // If we didn't find enough tracks, try direct search
-    if (tracks.length < 5) {
+    if (tracks.length < 25) {
       console.log(`Only found ${tracks.length} valid tracks in playlist, supplementing with direct search`);
       const additionalTracks = await searchSpotifyTracks(searchQuery, limit - tracks.length);
       return [...tracks, ...additionalTracks];

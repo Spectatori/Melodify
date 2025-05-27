@@ -18,11 +18,16 @@ function validateEnvironmentVars() {
 
 const { SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_CALLBACK_URL } = validateEnvironmentVars();
 
+// UPDATED: Added playlist creation and management scopes
 const spotifyScopes = [
   'user-read-email',
   'user-read-private',
-  'playlist-modify-public',
-  'playlist-modify-private',
+  'playlist-modify-public',    // REQUIRED: Create and modify public playlists
+  'playlist-modify-private',   // REQUIRED: Create and modify private playlists
+  'playlist-read-private',     // REQUIRED: Read user's private playlists
+  'playlist-read-collaborative', // REQUIRED: Read collaborative playlists
+  'user-library-read',         // Optional: Read user's saved tracks
+  'user-library-modify'        // Optional: Modify user's saved tracks
 ];
 
 const spotifyStrategy = new SpotifyStrategy(
@@ -31,7 +36,7 @@ const spotifyStrategy = new SpotifyStrategy(
     clientSecret: SPOTIFY_CLIENT_SECRET,
     callbackURL: SPOTIFY_CALLBACK_URL,
     sessionStorage,
-    scope: spotifyScopes.join(' '),
+    scope: spotifyScopes.join(' '), // IMPORTANT: Join scopes with spaces
   },
   async ({ accessToken, refreshToken, extraParams, profile }) => {
     const expirationTime = Date.now() + (extraParams.expiresIn ?? 3600) * 1000;
