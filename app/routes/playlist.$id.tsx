@@ -400,12 +400,12 @@ export default function PlaylistPage() {
         <div className='flex flex-col lg:flex-row gap-8'>
           {/* Playlist info panel */}
           <div className='lg:w-1/3'>
-            <div className='bg-white/20 backdrop-blur-md rounded-xl p-6 ring-1 ring-white/30 shadow-xl
+            <div className='flex flex-col items-center bg-white/20 backdrop-blur-md rounded-xl p-6 ring-1 ring-white/30 shadow-xl
               hover:shadow-2xl transition-all duration-300 sticky top-4'>
               
               {/* Playlist artwork placeholder */}
-              <div className='w-full aspect-square bg-gradient-to-br from-pink-500 to-purple-600 rounded-lg mb-4
-                flex items-center justify-center text-6xl'>
+              <div className='aspect-square bg-gradient-to-br from-pink-500 to-purple-600 rounded-lg mb-4
+                flex items-center justify-center text-6xl w-80'>
                 🎵
               </div>
               
