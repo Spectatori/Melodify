@@ -60,3 +60,23 @@ export function deletePlaylist(id: string, userId: string): boolean {
   
   return true;
 }
+
+export function clearUserPlaylists(userId: string): number {
+  const userPlaylistIds = userPlaylists.get(userId) || [];
+  
+  // Delete all playlists belonging to this user
+  let deletedCount = 0;
+  for (const playlistId of userPlaylistIds) {
+    const playlist = playlistStorage.get(playlistId);
+    if (playlist && playlist.userId === userId) {
+      playlistStorage.delete(playlistId);
+      deletedCount++;
+    }
+  }
+  
+  // Clear the user's playlist list
+  userPlaylists.set(userId, []);
+  
+  console.log(`Cleared ${deletedCount} playlists for user ${userId}`);
+  return deletedCount;
+}

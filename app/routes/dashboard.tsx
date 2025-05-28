@@ -34,10 +34,28 @@ interface PlaylistRecommendation {
   };
 }
 
+interface FetcherData {
+  content: string;
+  error?: string;
+  warning?: string;
+}
+
+interface ActionResponse {
+  success?: boolean;
+  error?: string;
+  playlist?: PlaylistRecommendation;
+  deletedId?: string;
+  clearedCount?: number;
+  naming?: {
+    name: string;
+    description: string;
+  };
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const session = await sessionStorage.getSession(request.headers.get('Cookie'));
   const user = session.get('user');
-  if (!user) return redirect('/login');
+  if (!user) return redirect('/login') as unknown as ActionResponse;
   
   // Get user's existing playlists
   const existingPlaylists = getUserPlaylists(user.id);
@@ -45,10 +63,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return { user, existingPlaylists };
 };
 
-export const action = async ({ request }: ActionFunctionArgs) => {
+export const action = async ({ request }: ActionFunctionArgs): Promise<ActionResponse> => {
   const session = await sessionStorage.getSession(request.headers.get('Cookie'));
   const user = session.get('user');
-  if (!user) return redirect('/login');
+  if (!user) return redirect('/login') as unknown as ActionResponse;
   
   const formData = await request.formData();
   const actionType = formData.get('actionType')?.toString();
@@ -68,6 +86,39 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     } catch (error) {
       console.error('Error saving playlist:', error);
       return { error: 'Failed to save playlist' };
+    }
+  }
+  
+  if (actionType === 'deletePlaylist') {
+    const playlistId = formData.get('playlistId')?.toString();
+    if (!playlistId) {
+      return { error: 'No playlist ID provided' };
+    }
+    
+    try {
+      const { deletePlaylist } = await import('~/services/playlist.server');
+      const deleted = deletePlaylist(playlistId, user.id);
+      
+      if (deleted) {
+        return { success: true, deletedId: playlistId };
+      } else {
+        return { error: 'Playlist not found or access denied' };
+      }
+    } catch (error) {
+      console.error('Error deleting playlist:', error);
+      return { error: 'Failed to delete playlist' };
+    }
+  }
+  
+  if (actionType === 'clearAllPlaylists') {
+    try {
+      const { clearUserPlaylists } = await import('~/services/playlist.server');
+      const clearedCount = clearUserPlaylists(user.id);
+      
+      return { success: true, clearedCount };
+    } catch (error) {
+      console.error('Error clearing all playlists:', error);
+      return { error: 'Failed to clear all playlists' };
     }
   }
   
@@ -114,7 +165,75 @@ export default function Dashboard() {
   }
 
   const llamaFetcher = useFetcher<FetcherData>();
-  const saveFetcher = useFetcher();
+  const saveFetcher = useFetcher<ActionResponse>();
+  const deleteFetcher = useFetcher<ActionResponse>();
+  const clearAllFetcher = useFetcher<ActionResponse>();
+  
+  // Handle save playlist response
+  useEffect(() => {
+    if (saveFetcher.state === 'idle' && saveFetcher.data) {
+      if (saveFetcher.data.error) {
+        console.error("Error saving playlist:", saveFetcher.data.error);
+        setErrorMessage(saveFetcher.data.error);
+      } else if (saveFetcher.data.success) {
+        console.log("Playlist saved successfully");
+      }
+    }
+  }, [saveFetcher]);
+  
+  // Handle delete playlist response  
+  useEffect(() => {
+    if (deleteFetcher.state === 'idle' && deleteFetcher.data) {
+      if (deleteFetcher.data.error) {
+        console.error("Error deleting playlist:", deleteFetcher.data.error);
+        setErrorMessage(deleteFetcher.data.error);
+      } else if (deleteFetcher.data.success && deleteFetcher.data.deletedId) {
+        console.log("Playlist deleted successfully");
+        // Remove the deleted playlist from local state
+        setPlaylists(prev => prev.filter(playlist => playlist.id !== deleteFetcher.data?.deletedId));
+        setErrorMessage(null);
+      }
+    }
+  }, [deleteFetcher]);
+  
+  // Handle clear all playlists response
+  useEffect(() => {
+    if (clearAllFetcher.state === 'idle' && clearAllFetcher.data) {
+      if (clearAllFetcher.data.error) {
+        console.error("Error clearing all playlists:", clearAllFetcher.data.error);
+        setErrorMessage(clearAllFetcher.data.error);
+      } else if (clearAllFetcher.data.success) {
+        console.log(`Cleared ${clearAllFetcher.data.clearedCount || 0} playlists`);
+        // Clear all playlists from local state
+        setPlaylists([]);
+        setErrorMessage(null);
+      }
+    }
+  }, [clearAllFetcher]);
+  
+  const handleDeletePlaylist = (playlistId: string, playlistName: string) => {
+    if (confirm(`Are you sure you want to delete "${playlistName}"? This action cannot be undone.`)) {
+      const formData = new FormData();
+      formData.append('actionType', 'deletePlaylist');
+      formData.append('playlistId', playlistId);
+      
+      deleteFetcher.submit(formData, { method: 'post' });
+    }
+  };
+  
+  const handleClearAllPlaylists = () => {
+    if (playlists.length === 0) {
+      setErrorMessage("No playlists to clear.");
+      return;
+    }
+    
+    if (confirm(`Are you sure you want to delete ALL ${playlists.length} playlists? This action cannot be undone.`)) {
+      const formData = new FormData();
+      formData.append('actionType', 'clearAllPlaylists');
+      
+      clearAllFetcher.submit(formData, { method: 'post' });
+    }
+  };
   
   const handleLlamaClick = () => {
     // Reset any previous error message
@@ -258,9 +377,16 @@ export default function Dashboard() {
           .filter(line => line.trim().match(/^\d+\.\s/))
           .map(line => line.trim());
         
-        // Generate AI-powered playlist name and description
-        const generateNamingAndSave = async () => {
-          const userOptions = {
+        // Create a new playlist recommendation with simple naming for now
+        // We'll generate the AI name separately to avoid infinite loops
+        const newPlaylist: PlaylistRecommendation = {
+          id: Date.now().toString(),
+          name: generateSimplePlaylistName(),
+          description: generateSimplePlaylistDescription(),
+          songs: songList,
+          createdAt: new Date().toISOString(),
+          userId: user.id,
+          filters: {
             genre: selectedGenre || undefined,
             subgenre: selectedSubgenre || undefined,
             mood: selectedMood || undefined,
@@ -269,156 +395,62 @@ export default function Dashboard() {
             era: selectedEra || undefined,
             timeOfDay: selectedTimeOfDay || undefined,
             weather: useWeather && weatherData ? weatherData.condition : undefined,
-          };
-          
-          // Call AI naming service
-          const namingFormData = new FormData();
-          namingFormData.append('actionType', 'generateNaming');
-          namingFormData.append('userOptions', JSON.stringify(userOptions));
-          
-          try {
-            const namingResponse = await fetch(window.location.pathname, {
-              method: 'POST',
-              body: namingFormData
-            });
-            
-            const namingResult = await namingResponse.json();
-            
-            let playlistName = 'Custom Playlist';
-            let playlistDescription = 'A personalized playlist generated by AI.';
-            
-            if (namingResult.success && namingResult.naming) {
-              playlistName = namingResult.naming.name;
-              playlistDescription = namingResult.naming.description;
-            } else {
-              console.log("AI naming failed, using fallback names");
-              // Fallback naming
-              playlistName = await generatePlaylistName();
-              playlistDescription = await generatePlaylistDescription();
-            }
-            
-            // Create the playlist with AI-generated name and description
-            const newPlaylist: PlaylistRecommendation = {
-              id: Date.now().toString(),
-              name: playlistName,
-              description: playlistDescription,
-              songs: songList,
-              createdAt: new Date().toISOString(),
-              userId: user.id,
-              filters: userOptions
-            };
-            
-            // Save playlist to server
-            const saveFormData = new FormData();
-            saveFormData.append('actionType', 'savePlaylist');
-            saveFormData.append('playlistData', JSON.stringify(newPlaylist));
-            
-            saveFetcher.submit(saveFormData, { method: 'post' });
-            
-            // Add to local playlists array immediately for better UX
-            setPlaylists(prev => [newPlaylist, ...prev]);
-            
-          } catch (error) {
-            console.error("Error generating naming:", error);
-            
-            // Fallback to simple naming
-            const newPlaylist: PlaylistRecommendation = {
-              id: Date.now().toString(),
-              name: await generatePlaylistName(),
-              description: await generatePlaylistDescription(),
-              songs: songList,
-              createdAt: new Date().toISOString(),
-              userId: user.id,
-              filters: userOptions
-            };
-            
-            // Save playlist to server
-            const saveFormData = new FormData();
-            saveFormData.append('actionType', 'savePlaylist');
-            saveFormData.append('playlistData', JSON.stringify(newPlaylist));
-            
-            saveFetcher.submit(saveFormData, { method: 'post' });
-            
-            // Add to local playlists array immediately for better UX
-            setPlaylists(prev => [newPlaylist, ...prev]);
           }
         };
         
-        generateNamingAndSave();
+        // Save playlist to server
+        const formData = new FormData();
+        formData.append('actionType', 'savePlaylist');
+        formData.append('playlistData', JSON.stringify(newPlaylist));
+        
+        saveFetcher.submit(formData, { method: 'post' });
+        
+        // Add to local playlists array immediately for better UX
+        setPlaylists(prev => [newPlaylist, ...prev]);
       }
     }
-  }, [llamaFetcher]);
+  }, [llamaFetcher.state, llamaFetcher.data]); // Added dependencies to prevent infinite loop
   
-  interface SaveFetcherData {
-    error?: string;
-    success?: boolean;
-    playlist?: PlaylistRecommendation;
-  }
-
   // Handle save playlist response
   useEffect(() => {
     if (saveFetcher.state === 'idle' && saveFetcher.data) {
-      const data = saveFetcher.data as SaveFetcherData;
-      if ('error' in data) {
-        console.error("Error saving playlist:", data.error);
-        setErrorMessage(data.error ?? null);
-      } else if ('success' in data) {
+      if (saveFetcher.data.error) {
+        console.error("Error saving playlist:", saveFetcher.data.error);
+        setErrorMessage(saveFetcher.data.error);
+      } else if (saveFetcher.data.success) {
         console.log("Playlist saved successfully");
       }
     }
   }, [saveFetcher]);
   
-  const generatePlaylistName = async () => {
-    // Build context for playlist naming
-    let context = "";
-    
-    if (selectedGenre) {
-      context += `Genre: ${selectedGenre}`;
-      if (selectedSubgenre) {
-        context += ` (${selectedSubgenre})`;
-      }
-    }
+  const generateSimplePlaylistName = () => {
+    const parts = [];
     
     if (selectedMood) {
-      context += `, Mood: ${selectedMood}`;
+      parts.push(selectedMood);
+    }
+    
+    if (selectedSubgenre) {
+      parts.push(selectedSubgenre);
+    } else if (selectedGenre) {
+      parts.push(selectedGenre);
     }
     
     if (selectedActivity) {
-      context += `, Activity: ${selectedActivity}`;
+      parts.push(`for ${selectedActivity}`);
+    } else if (selectedTimeOfDay) {
+      parts.push(selectedTimeOfDay);
     }
     
-    if (selectedEra) {
-      context += `, Era: ${selectedEra}`;
+    if (parts.length === 0) {
+      return 'Custom Playlist';
     }
     
-    if (selectedTimeOfDay) {
-      context += `, Time: ${selectedTimeOfDay}`;
-    }
-    
-    if (useWeather && weatherData) {
-      context += `, Weather: ${weatherData.condition}`;
-    }
-    
-    // Use a simple but creative approach for now
-    // In a real implementation, you might want to call the LLM here too
-    const creativeNames = [
-      `${selectedMood || 'Perfect'} ${selectedGenre || 'Music'} Vibes`,
-      `${selectedActivity || 'Daily'} ${selectedGenre || 'Soundtrack'}`,
-      `${selectedEra || 'Timeless'} ${selectedGenre || 'Classics'}`,
-      `${selectedMood || 'Good'} ${selectedTimeOfDay || 'Anytime'} Mix`,
-      `${weatherData?.condition || 'Perfect'} Day ${selectedGenre || 'Playlist'}`,
-      `${selectedSubgenre || selectedGenre || 'Music'} ${selectedActivity || 'Session'}`,
-      `${selectedMood || 'Ultimate'} ${selectedGenre || 'Collection'}`,
-      `${selectedTimeOfDay || 'All Day'} ${selectedGenre || 'Beats'}`,
-    ];
-    
-    // Filter out names with "undefined" and pick a random one
-    const validNames = creativeNames.filter(name => !name.includes('undefined'));
-    return validNames[Math.floor(Math.random() * validNames.length)] || 'Custom Playlist';
+    return parts.join(' ') + ' Mix';
   };
   
-  const generatePlaylistDescription = async () => {
-    let description = "A carefully curated playlist";
+  const generateSimplePlaylistDescription = () => {
+    let description = "A personalized playlist";
     
     const elements = [];
     
@@ -438,22 +470,14 @@ export default function Dashboard() {
     }
     
     if (selectedEra) {
-      elements.push(`drawing from the ${selectedEra}`);
-    }
-    
-    if (selectedTimeOfDay) {
-      elements.push(`ideal for ${selectedTimeOfDay.toLowerCase()} listening`);
-    }
-    
-    if (useWeather && weatherData) {
-      elements.push(`matching the ${weatherData.condition.toLowerCase()} weather in ${weatherData.location}`);
+      elements.push(`from the ${selectedEra}`);
     }
     
     if (elements.length > 0) {
       description += " " + elements.join(", ");
     }
     
-    description += ". Generated by your AI music assistant to match your exact preferences.";
+    description += ". Generated by your AI music assistant.";
     
     return description;
   };
@@ -569,7 +593,33 @@ export default function Dashboard() {
   
   const PlaylistsList = () => (
     <div className='mt-6 w-full max-w-4xl mx-auto'>
-      <h3 className='text-white font-bold text-2xl mb-4'>Your Generated Playlists</h3>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className='text-white font-bold text-2xl'>Your Generated Playlists</h3>
+        
+        {playlists.length > 0 && (
+          <button
+            onClick={handleClearAllPlaylists}
+            disabled={clearAllFetcher.state === 'submitting'}
+            className='bg-red-600/80 hover:bg-red-500 text-white font-bold py-2 px-4 rounded-lg
+              transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed
+              hover:scale-105 disabled:hover:scale-100 flex items-center gap-2 text-sm'
+          >
+            {clearAllFetcher.state === 'submitting' ? (
+              <>
+                <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin"></div>
+                Clearing...
+              </>
+            ) : (
+              <>
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Clear All ({playlists.length})
+              </>
+            )}
+          </button>
+        )}
+      </div>
       
       {errorMessage && (
         <div className="mb-4 py-2 px-4 bg-white/20 rounded-lg text-white/90 text-sm">
@@ -577,55 +627,86 @@ export default function Dashboard() {
         </div>
       )}
       
-      <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
-        {playlists.map((playlist, index) => (
-          <Link 
-            key={playlist.id}
-            to={`/playlist/${playlist.id}`}
-            className='block'
-          >
+      {playlists.length === 0 ? (
+        <div className="text-center py-12">
+          <div className="text-white/60 text-6xl mb-4">🎵</div>
+          <h4 className="text-white/80 text-xl font-medium mb-2">No playlists yet</h4>
+          <p className="text-white/60 text-sm">Create your first playlist by selecting a genre and clicking "Generate Playlist"</p>
+        </div>
+      ) : (
+        <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
+          {playlists.map((playlist, index) => (
             <div 
+              key={playlist.id}
               className='bg-white/20 backdrop-blur-md rounded-xl p-6 ring-1 ring-white/30 shadow-xl
-                hover:shadow-2xl transition-all duration-300 hover:bg-white/30 hover:scale-105 cursor-pointer'
+                hover:shadow-2xl transition-all duration-300 hover:bg-white/30 relative group'
               style={{ 
                 animation: 'fadeIn 0.5s ease-out forwards',
                 animationDelay: `${index * 100}ms`,
                 opacity: '0'
               }}
             >
-              <div className="flex items-start justify-between mb-3">
-                <h4 className='text-white font-bold text-lg line-clamp-2'>{playlist.name}</h4>
-                <div className="text-white/60 text-2xl">🎵</div>
-              </div>
-              
-              <p className='text-white/80 text-sm mb-3 line-clamp-2'>{playlist.description}</p>
-              
-              <div className="flex items-center justify-between text-white/60 text-xs">
-                <span>{playlist.songs.length} songs</span>
-                <span>{new Date(playlist.createdAt).toLocaleDateString()}</span>
-              </div>
-              
-              <div className="mt-3 flex flex-wrap gap-1">
-                {playlist.filters.genre && (
-                  <span className="bg-white/20 px-2 py-1 rounded text-xs text-white">
-                    {playlist.filters.genre}
-                  </span>
+              {/* Delete button */}
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleDeletePlaylist(playlist.id, playlist.name);
+                }}
+                disabled={deleteFetcher.state === 'submitting'}
+                className="absolute top-2 right-2 p-2 text-white/60 hover:text-red-400 rounded-full 
+                  hover:bg-red-500/20 transition-all duration-300 opacity-0 group-hover:opacity-100
+                  disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Delete playlist"
+              >
+                {deleteFetcher.state === 'submitting' ? (
+                  <div className="w-5 h-5 rounded-full border-2 border-current border-t-transparent animate-spin"></div>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
                 )}
-                {playlist.filters.mood && (
-                  <span className="bg-white/20 px-2 py-1 rounded text-xs text-white">
-                    {playlist.filters.mood}
-                  </span>
-                )}
-                {playlist.filters.era && (
-                  <span className="bg-white/20 px-2 py-1 rounded text-xs text-white">
-                    {playlist.filters.era}
-                  </span>
-                )}
-              </div>
+              </button>
+              
+              {/* Playlist content - wrapped in Link */}
+              <Link 
+                to={`/playlist/${playlist.id}`}
+                className='block h-full'
+              >
+                <div className="flex items-start justify-between mb-3 pr-8">
+                  <h4 className='text-white font-bold text-lg line-clamp-2'>{playlist.name}</h4>
+                  <div className="text-white/60 text-2xl">🎵</div>
+                </div>
+                
+                <p className='text-white/80 text-sm mb-3 line-clamp-2'>{playlist.description}</p>
+                
+                <div className="flex items-center justify-between text-white/60 text-xs">
+                  <span>{playlist.songs.length} songs</span>
+                  <span>{new Date(playlist.createdAt).toLocaleDateString()}</span>
+                </div>
+                
+                <div className="mt-3 flex flex-wrap gap-1">
+                  {playlist.filters.genre && (
+                    <span className="bg-white/20 px-2 py-1 rounded text-xs text-white">
+                      {playlist.filters.genre}
+                    </span>
+                  )}
+                  {playlist.filters.mood && (
+                    <span className="bg-white/20 px-2 py-1 rounded text-xs text-white">
+                      {playlist.filters.mood}
+                    </span>
+                  )}
+                  {playlist.filters.era && (
+                    <span className="bg-white/20 px-2 py-1 rounded text-xs text-white">
+                      {playlist.filters.era}
+                    </span>
+                  )}
+                </div>
+              </Link>
             </div>
-          </Link>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
   
