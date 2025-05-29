@@ -20,6 +20,7 @@ interface PlaylistRecommendation {
   songs: string[];
   createdAt: string;
   userId: string;
+  coverImageUrl?: string;
   filters: {
     genre?: string;
     subgenre?: string;
@@ -44,6 +45,8 @@ interface ActionResponse {
   playlist?: PlaylistRecommendation;
   deletedId?: string;
   clearedCount?: number;
+  coverImageUrl?: string;
+  imagePrompt?: string;
   naming?: {
     name: string;
     description: string;
@@ -136,6 +139,123 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
   
+  if (actionType === 'checkPlaylistCover') {
+    const playlistId = formData.get('playlistId')?.toString();
+    if (!playlistId) {
+      return json({ error: 'No playlist ID provided' });
+    }
+    
+    try {
+      const { getPlaylistCoverUrl } = await import('~/services/stability.server');
+      const coverUrl = getPlaylistCoverUrl(playlistId);
+      return json({ success: true, coverImageUrl: coverUrl });
+    } catch (error) {
+      console.error('Error checking playlist cover:', error);
+      return json({ error: 'Failed to check playlist cover' });
+    }
+  }
+  
+  if (actionType === 'generatePlaylistWithImage') {
+    const userOptionsData = formData.get('userOptions')?.toString();
+    const playlistData = formData.get('playlistData')?.toString();
+    
+    if (!userOptionsData || !playlistData) {
+      return json({ error: 'Missing required data' });
+    }
+    
+    try {
+      const userOptions = JSON.parse(userOptionsData);
+      const playlist: PlaylistRecommendation = JSON.parse(playlistData);
+      
+      // Import server-only modules inside the action function
+      const { generatePlaylistImagePrompt } = await import('~/services/playlist-image-prompt.server');
+      const { generatePlaylistCoverArt } = await import('~/services/stability.server');
+      
+      // Start both operations simultaneously
+      const [namingResult, imagePromiseResult] = await Promise.allSettled([
+        // Generate playlist naming
+        generatePlaylistNaming(userOptions),
+        
+        // Generate image in parallel
+        (async () => {
+          const imagePrompt = await generatePlaylistImagePrompt(
+            playlist.name,
+            playlist.description,
+            userOptions
+          );
+          
+          const coverImageUrl = await generatePlaylistCoverArt(playlist.id, imagePrompt);
+          return { coverImageUrl, imagePrompt };
+        })()
+      ]);
+      
+      // Handle results
+      let naming = { name: playlist.name, description: playlist.description };
+      if (namingResult.status === 'fulfilled') {
+        naming = namingResult.value;
+      }
+      
+      let coverImageUrl = undefined;
+      if (imagePromiseResult.status === 'fulfilled') {
+        coverImageUrl = imagePromiseResult.value.coverImageUrl;
+      }
+      
+      return json({ 
+        success: true, 
+        naming,
+        coverImageUrl,
+        imagePrompt: imagePromiseResult.status === 'fulfilled' ? imagePromiseResult.value.imagePrompt : undefined
+      });
+      
+    } catch (error) {
+      console.error('Error in combined generation:', error);
+      return json({ error: 'Failed to generate playlist and image' });
+    }
+  }
+  
+  if (actionType === 'generatePlaylistImage') {
+    const playlistData = formData.get('playlistData')?.toString();
+    const userOptionsData = formData.get('userOptions')?.toString();
+    
+    if (!playlistData || !userOptionsData) {
+      return json({ error: 'Missing playlist or user options data' });
+    }
+    
+    try {
+      const playlist: PlaylistRecommendation = JSON.parse(playlistData);
+      const userOptions = JSON.parse(userOptionsData);
+      
+      // Import server-only modules inside the action function
+      const { generatePlaylistImagePrompt } = await import('~/services/playlist-image-prompt.server');
+      const { generatePlaylistCoverArt } = await import('~/services/stability.server');
+      
+      // Generate image prompt using Llama
+      console.log('Generating image prompt for playlist:', playlist.name);
+      const imagePrompt = await generatePlaylistImagePrompt(
+        playlist.name,
+        playlist.description,
+        userOptions
+      );
+      
+      console.log('Generated image prompt:', imagePrompt);
+      
+      // Generate the actual image using Stability AI
+      console.log('Generating cover art for playlist:', playlist.id);
+      const coverImageUrl = await generatePlaylistCoverArt(playlist.id, imagePrompt);
+      
+      console.log('Generated cover art URL:', coverImageUrl);
+      
+      return json({ 
+        success: true, 
+        coverImageUrl,
+        imagePrompt // Return the prompt for debugging if needed
+      });
+    } catch (error) {
+      console.error('Error generating playlist image:', error);
+      return json({ error: 'Failed to generate playlist image' });
+    }
+  }
+  
   return json({ error: 'Invalid action' });
 };
 
@@ -156,11 +276,18 @@ export default function Dashboard() {
   const [showAdditionalOptions, setShowAdditionalOptions] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [deletingPlaylistId, setDeletingPlaylistId] = useState<string | null>(null);
+  const [pendingPlaylistId, setPendingPlaylistId] = useState<string | null>(null);
+  const [completedOperations, setCompletedOperations] = useState<{
+    songs?: string[];
+    assets?: { coverImageUrl?: string; naming?: { name: string; description: string } };
+  }>({});
   
   const llamaFetcher = useFetcher<FetcherData>();
   const saveFetcher = useFetcher<ActionResponse>();
   const deleteFetcher = useFetcher<ActionResponse>();
   const clearAllFetcher = useFetcher<ActionResponse>();
+  const imageFetcher = useFetcher<ActionResponse>();
+  const coverCheckFetcher = useFetcher<ActionResponse>();
   
   const handleLlamaClick = useCallback(() => {
     setErrorMessage(null);
@@ -199,23 +326,71 @@ export default function Dashboard() {
     
     prompt += `. Format as a numbered list of 15-20 songs with artist names.`;
     
-    console.log("Submitting Enhanced Llama request with prompt:", prompt);
+    console.log("Starting parallel generation: songs + image + naming");
     setIsLoading(true);
     
-    const formData = new FormData();
-    formData.append("prompt", prompt);
+    // Create the playlist structure immediately
+    const newPlaylistId = Date.now().toString();
+    const tempPlaylist: PlaylistRecommendation = {
+      id: newPlaylistId,
+      name: generateSimplePlaylistName(),
+      description: generateSimplePlaylistDescription(),
+      songs: [],
+      createdAt: new Date().toISOString(),
+      userId: user.id,
+      coverImageUrl: undefined,
+      filters: {
+        genre: selectedGenre || undefined,
+        subgenre: selectedSubgenre || undefined,
+        mood: selectedMood || undefined,
+        bpm: selectedBPM || undefined,
+        activity: selectedActivity || undefined,
+        era: selectedEra || undefined,
+        timeOfDay: selectedTimeOfDay || undefined,
+        weather: useWeather && weatherData ? weatherData.condition : undefined,
+      }
+    };
     
-    if (selectedGenre) formData.append("genre", selectedGenre);
-    if (selectedSubgenre) formData.append("subgenre", selectedSubgenre);
-    if (selectedMood) formData.append("mood", selectedMood);
-    if (selectedBPM) formData.append("bpm", selectedBPM);
-    if (selectedActivity) formData.append("activity", selectedActivity);
-    if (selectedEra) formData.append("era", selectedEra);
-    if (selectedTimeOfDay) formData.append("timeOfDay", selectedTimeOfDay);
-    if (useWeather && weatherData) formData.append("weather", weatherData.condition);
+    // Add empty playlist to UI immediately for instant feedback
+    setPlaylists(prev => [tempPlaylist, ...prev]);
+    setPendingPlaylistId(newPlaylistId);
+    setCompletedOperations({}); // Reset completed operations
     
-    llamaFetcher.submit(formData, { method: "post", action: "/api/llama" });
-  }, [selectedGenre, selectedSubgenre, selectedMood, selectedBPM, selectedActivity, selectedEra, selectedTimeOfDay, useWeather, weatherData, llamaFetcher]);
+    // Start both operations simultaneously
+    const userOptions = {
+      genre: selectedGenre,
+      subgenre: selectedSubgenre,
+      mood: selectedMood,
+      bpm: selectedBPM,
+      activity: selectedActivity,
+      era: selectedEra,
+      timeOfDay: selectedTimeOfDay,
+      weather: useWeather && weatherData ? weatherData.condition : undefined,
+    };
+    
+    // 1. Start song generation
+    const songFormData = new FormData();
+    songFormData.append("prompt", prompt);
+    if (selectedGenre) songFormData.append("genre", selectedGenre);
+    if (selectedSubgenre) songFormData.append("subgenre", selectedSubgenre);
+    if (selectedMood) songFormData.append("mood", selectedMood);
+    if (selectedBPM) songFormData.append("bpm", selectedBPM);
+    if (selectedActivity) songFormData.append("activity", selectedActivity);
+    if (selectedEra) songFormData.append("era", selectedEra);
+    if (selectedTimeOfDay) songFormData.append("timeOfDay", selectedTimeOfDay);
+    if (useWeather && weatherData) songFormData.append("weather", weatherData.condition);
+    
+    llamaFetcher.submit(songFormData, { method: "post", action: "/api/llama" });
+    
+    // 2. Start image + naming generation simultaneously
+    const assetsFormData = new FormData();
+    assetsFormData.append('actionType', 'generatePlaylistWithImage');
+    assetsFormData.append('playlistData', JSON.stringify(tempPlaylist));
+    assetsFormData.append('userOptions', JSON.stringify(userOptions));
+    
+    imageFetcher.submit(assetsFormData, { method: 'post' });
+    
+  }, [selectedGenre, selectedSubgenre, selectedMood, selectedBPM, selectedActivity, selectedEra, selectedTimeOfDay, useWeather, weatherData, llamaFetcher, imageFetcher, user.id]);
   
   // Weather API fetch
   useEffect(() => {
@@ -266,14 +441,14 @@ export default function Dashboard() {
   
   useEffect(() => {
     if (llamaFetcher.state === 'idle' && llamaFetcher.data) {
-      setIsLoading(false);
-      console.log("Llama Fetcher data:", llamaFetcher.data);
+      console.log("Songs generation completed");
       
       if (llamaFetcher.data.error) {
         console.error("Error:", llamaFetcher.data.error);
         setErrorMessage(llamaFetcher.data.error);
+        setIsLoading(false);
+        setPendingPlaylistId(null);
       } else if (llamaFetcher.data.content) {
-        
         if (llamaFetcher.data.warning) {
           setErrorMessage(llamaFetcher.data.warning);
         } else {
@@ -285,34 +460,104 @@ export default function Dashboard() {
           .filter(line => line.trim().match(/^\d+\.\s/))
           .map(line => line.trim());
         
-        const newPlaylist: PlaylistRecommendation = {
-          id: Date.now().toString(),
-          name: generateSimplePlaylistName(),
-          description: generateSimplePlaylistDescription(),
-          songs: songList,
-          createdAt: new Date().toISOString(),
-          userId: user.id,
-          filters: {
-            genre: selectedGenre || undefined,
-            subgenre: selectedSubgenre || undefined,
-            mood: selectedMood || undefined,
-            bpm: selectedBPM || undefined,
-            activity: selectedActivity || undefined,
-            era: selectedEra || undefined,
-            timeOfDay: selectedTimeOfDay || undefined,
-            weather: useWeather && weatherData ? weatherData.condition : undefined,
-          }
-        };
-        
-        const formData = new FormData();
-        formData.append('actionType', 'savePlaylist');
-        formData.append('playlistData', JSON.stringify(newPlaylist));
-        
-        saveFetcher.submit(formData, { method: 'post' });
-        setPlaylists(prev => [newPlaylist, ...prev]);
+        // Store completed songs
+        setCompletedOperations(prev => ({ ...prev, songs: songList }));
       }
     }
   }, [llamaFetcher.state, llamaFetcher.data]);
+  
+  useEffect(() => {
+    if (imageFetcher.state === 'idle' && imageFetcher.data) {
+      console.log("Assets generation completed");
+      
+      if (imageFetcher.data.error) {
+        console.error("Error generating playlist assets:", imageFetcher.data.error);
+        // Don't fail the whole operation for assets
+      } else if (imageFetcher.data.success) {
+        const assets = {
+          coverImageUrl: imageFetcher.data.coverImageUrl,
+          naming: imageFetcher.data.naming
+        };
+        
+        // Store completed assets
+        setCompletedOperations(prev => ({ ...prev, assets }));
+      }
+    }
+  }, [imageFetcher.state, imageFetcher.data]);
+  
+  // Combine results when both operations are complete
+  useEffect(() => {
+    if (pendingPlaylistId && completedOperations.songs && completedOperations.assets) {
+      console.log("Both operations completed, combining results");
+      
+      const finalPlaylist: PlaylistRecommendation = {
+        id: pendingPlaylistId,
+        name: completedOperations.assets.naming?.name || generateSimplePlaylistName(),
+        description: completedOperations.assets.naming?.description || generateSimplePlaylistDescription(),
+        songs: completedOperations.songs,
+        createdAt: new Date().toISOString(),
+        userId: user.id,
+        coverImageUrl: completedOperations.assets.coverImageUrl,
+        filters: {
+          genre: selectedGenre || undefined,
+          subgenre: selectedSubgenre || undefined,
+          mood: selectedMood || undefined,
+          bpm: selectedBPM || undefined,
+          activity: selectedActivity || undefined,
+          era: selectedEra || undefined,
+          timeOfDay: selectedTimeOfDay || undefined,
+          weather: useWeather && weatherData ? weatherData.condition : undefined,
+        }
+      };
+      
+      // Update the playlist in the UI
+      setPlaylists(prev => prev.map(playlist => 
+        playlist.id === pendingPlaylistId ? finalPlaylist : playlist
+      ));
+      
+      // Save the final playlist
+      const formData = new FormData();
+      formData.append('actionType', 'savePlaylist');
+      formData.append('playlistData', JSON.stringify(finalPlaylist));
+      saveFetcher.submit(formData, { method: 'post' });
+      
+      // Clean up
+      setIsLoading(false);
+      setPendingPlaylistId(null);
+      setCompletedOperations({});
+    }
+  }, [pendingPlaylistId, completedOperations, user.id, selectedGenre, selectedSubgenre, selectedMood, selectedBPM, selectedActivity, selectedEra, selectedTimeOfDay, useWeather, weatherData]);
+  
+  useEffect(() => {
+    if (coverCheckFetcher.state === 'idle' && coverCheckFetcher.data) {
+      if (coverCheckFetcher.data.success && coverCheckFetcher.data.coverImageUrl) {
+        // Update playlists that now have cover images
+        setPlaylists(prev => prev.map(playlist => {
+          if (!playlist.coverImageUrl && coverCheckFetcher.data?.coverImageUrl) {
+            return { ...playlist, coverImageUrl: coverCheckFetcher.data.coverImageUrl };
+          }
+          return playlist;
+        }));
+      }
+    }
+  }, [coverCheckFetcher]);
+  
+  // Check for existing covers when component mounts
+  useEffect(() => {
+    const playlistsWithoutCovers = playlists.filter(p => !p.coverImageUrl);
+    if (playlistsWithoutCovers.length > 0) {
+      // Check for existing covers for playlists that don't have them
+      playlistsWithoutCovers.forEach(playlist => {
+        const formData = new FormData();
+        formData.append('actionType', 'checkPlaylistCover');
+        formData.append('playlistId', playlist.id);
+        
+        setTimeout(() => {
+          coverCheckFetcher.submit(formData, { method: 'post' });
+        }, Math.random() * 1000); // Stagger the requests
+      });
+    }
+  }, [playlists.length]);
   
   useEffect(() => {
     if (saveFetcher.state === 'idle' && saveFetcher.data) {
@@ -873,7 +1118,17 @@ export default function Dashboard() {
                   >
                     <div className="flex items-start justify-between mb-3 pr-8">
                       <h4 className='text-white font-bold text-lg line-clamp-2'>{playlist.name}</h4>
-                      <div className="text-white/60 text-2xl">🎵</div>
+                      <div className="text-white/60 text-2xl">
+                        {playlist.coverImageUrl ? (
+                          <img 
+                            src={playlist.coverImageUrl} 
+                            alt={`${playlist.name} cover`}
+                            className="w-8 h-8 rounded object-cover"
+                          />
+                        ) : (
+                          '🎵'
+                        )}
+                      </div>
                     </div>
                     
                     <p className='text-white/80 text-sm mb-3 line-clamp-2'>{playlist.description}</p>
@@ -917,11 +1172,53 @@ export default function Dashboard() {
       </div>
       
       {isLoading && (
-        <div className="fixed bottom-4 right-10 bg-white/20 backdrop-blur-md px-4 py-2 rounded-lg ring-1 ring-white/30 shadow-lg
-         animate-pulse">
-          <div className="flex items-center space-x-2">
-            <div className="w-4 h-4 rounded-full bg-white animate-bounce"></div>
-            <p className="text-white">Creating playlist...</p>
+        <div className="fixed bottom-4 right-10 space-y-2">
+          {/* Main loading indicator */}
+          <div className="bg-white/20 backdrop-blur-md px-4 py-2 rounded-lg ring-1 ring-white/30 shadow-lg animate-pulse">
+            <div className="flex items-center space-x-2">
+              <div className="w-4 h-4 rounded-full bg-white animate-bounce"></div>
+              <p className="text-white">Creating playlist...</p>
+            </div>
+          </div>
+          
+          {/* Songs progress */}
+          <div className={`bg-blue-600/20 backdrop-blur-md px-4 py-2 rounded-lg ring-1 ring-blue-300/30 shadow-lg transition-all duration-300 ${
+            llamaFetcher.state === 'submitting' ? 'animate-pulse' : completedOperations.songs ? 'bg-green-600/20 ring-green-300/30' : 'opacity-50'
+          }`}>
+            <div className="flex items-center space-x-2">
+              {completedOperations.songs ? (
+                <div className="w-4 h-4 rounded-full bg-green-300 flex items-center justify-center">
+                  <svg className="w-2 h-2 text-green-800" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              ) : (
+                <div className="w-4 h-4 rounded-full bg-blue-300 animate-bounce"></div>
+              )}
+              <p className="text-white text-sm">
+                {completedOperations.songs ? '✓ Songs ready' : 'Generating songs...'}
+              </p>
+            </div>
+          </div>
+          
+          {/* Assets progress */}
+          <div className={`bg-purple-600/20 backdrop-blur-md px-4 py-2 rounded-lg ring-1 ring-purple-300/30 shadow-lg transition-all duration-300 ${
+            imageFetcher.state === 'submitting' ? 'animate-pulse' : completedOperations.assets ? 'bg-green-600/20 ring-green-300/30' : 'opacity-50'
+          }`}>
+            <div className="flex items-center space-x-2">
+              {completedOperations.assets ? (
+                <div className="w-4 h-4 rounded-full bg-green-300 flex items-center justify-center">
+                  <svg className="w-2 h-2 text-green-800" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              ) : (
+                <div className="w-4 h-4 rounded-full bg-purple-300 animate-bounce"></div>
+              )}
+              <p className="text-white text-sm">
+                {completedOperations.assets ? '✓ Cover art & naming ready' : 'Generating cover art & naming...'}
+              </p>
+            </div>
           </div>
         </div>
       )}
