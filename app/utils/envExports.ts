@@ -19,3 +19,5 @@ export const SPOTIFY_CALLBACK_URL = getEnv("SPOTIFY_CALLBACK_URL");
 export const OPENAI_API_KEY = getEnv("OPENAI_API_KEY");
 
 export const SESSION_SECRET = getEnv("SESSION_SECRET");
+
+export const STABILITY_API_KEY = getEnv("STABILITY_API_KEY");
