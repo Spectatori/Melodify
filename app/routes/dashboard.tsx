@@ -542,22 +542,13 @@ export default function Dashboard() {
     );
   }, [selectedGenre, selectedSubgenre, handleSubgenreClick]);
   
-  const FilterOption = memo(({ 
-    title, 
-    options, 
-    selectedValue, 
-    onSelect 
-  }: { 
-    title: string; 
-    options: string[]; 
-    selectedValue: string | null; 
-    onSelect: (value: string) => void;
-  }) => (
+  // Memoized filter components to prevent re-renders
+  const MoodFilter = useMemo(() => (
     <div className='bg-white/20 backdrop-blur-md rounded-xl p-4 ring-1 ring-white/30 shadow-xl
       hover:shadow-2xl transition-all duration-300 w-full hover:bg-white/30'>
-      <h3 className='text-white font-bold text-xl mb-2'>{title}</h3>
+      <h3 className='text-white font-bold text-xl mb-2'>Mood (Optional)</h3>
       <div className='flex flex-wrap gap-2'>
-        {options.map((option, index) => (
+        {moodOptions.map((option, index) => (
           <div
             key={option}
             style={{ 
@@ -566,15 +557,111 @@ export default function Dashboard() {
               opacity: '0'
             }}
             className={`cursor-pointer p-2 px-3 rounded-lg transition-all duration-200 hover:bg-white/20 text-white
-              ${selectedValue === option ? 'bg-white/30 shadow-lg ring-1 ring-white/40 font-bold scale-105' : 'text-white/90'}`}
-            onClick={() => onSelect(selectedValue === option ? '' : option)}
+              ${selectedMood === option ? 'bg-white/30 shadow-lg ring-1 ring-white/40 font-bold scale-105' : 'text-white/90'}`}
+            onClick={() => moodHandler(option)}
           >
             {option}
           </div>
         ))}
       </div>
     </div>
-  ));
+  ), [selectedMood, moodHandler]);
+  
+  const BPMFilter = useMemo(() => (
+    <div className='bg-white/20 backdrop-blur-md rounded-xl p-4 ring-1 ring-white/30 shadow-xl
+      hover:shadow-2xl transition-all duration-300 w-full hover:bg-white/30'>
+      <h3 className='text-white font-bold text-xl mb-2'>BPM Range (Optional)</h3>
+      <div className='flex flex-wrap gap-2'>
+        {bpmRanges.map((option, index) => (
+          <div
+            key={option}
+            style={{ 
+              animation: 'slideUp 0.3s ease-out forwards',
+              animationDelay: `${index * 30}ms`,
+              opacity: '0'
+            }}
+            className={`cursor-pointer p-2 px-3 rounded-lg transition-all duration-200 hover:bg-white/20 text-white
+              ${selectedBPM === option ? 'bg-white/30 shadow-lg ring-1 ring-white/40 font-bold scale-105' : 'text-white/90'}`}
+            onClick={() => bpmHandler(option)}
+          >
+            {option}
+          </div>
+        ))}
+      </div>
+    </div>
+  ), [selectedBPM, bpmHandler]);
+  
+  const ActivityFilter = useMemo(() => (
+    <div className='bg-white/20 backdrop-blur-md rounded-xl p-4 ring-1 ring-white/30 shadow-xl
+      hover:shadow-2xl transition-all duration-300 w-full hover:bg-white/30'>
+      <h3 className='text-white font-bold text-xl mb-2'>Activity (Optional)</h3>
+      <div className='flex flex-wrap gap-2'>
+        {activityOptions.map((option, index) => (
+          <div
+            key={option}
+            style={{ 
+              animation: 'slideUp 0.3s ease-out forwards',
+              animationDelay: `${index * 30}ms`,
+              opacity: '0'
+            }}
+            className={`cursor-pointer p-2 px-3 rounded-lg transition-all duration-200 hover:bg-white/20 text-white
+              ${selectedActivity === option ? 'bg-white/30 shadow-lg ring-1 ring-white/40 font-bold scale-105' : 'text-white/90'}`}
+            onClick={() => activityHandler(option)}
+          >
+            {option}
+          </div>
+        ))}
+      </div>
+    </div>
+  ), [selectedActivity, activityHandler]);
+  
+  const EraFilter = useMemo(() => (
+    <div className='bg-white/20 backdrop-blur-md rounded-xl p-4 ring-1 ring-white/30 shadow-xl
+      hover:shadow-2xl transition-all duration-300 w-full hover:bg-white/30'>
+      <h3 className='text-white font-bold text-xl mb-2'>Era (Optional)</h3>
+      <div className='flex flex-wrap gap-2'>
+        {eraOptions.map((option, index) => (
+          <div
+            key={option}
+            style={{ 
+              animation: 'slideUp 0.3s ease-out forwards',
+              animationDelay: `${index * 30}ms`,
+              opacity: '0'
+            }}
+            className={`cursor-pointer p-2 px-3 rounded-lg transition-all duration-200 hover:bg-white/20 text-white
+              ${selectedEra === option ? 'bg-white/30 shadow-lg ring-1 ring-white/40 font-bold scale-105' : 'text-white/90'}`}
+            onClick={() => eraHandler(option)}
+          >
+            {option}
+          </div>
+        ))}
+      </div>
+    </div>
+  ), [selectedEra, eraHandler]);
+  
+  const TimeFilter = useMemo(() => (
+    <div className='bg-white/20 backdrop-blur-md rounded-xl p-4 ring-1 ring-white/30 shadow-xl
+      hover:shadow-2xl transition-all duration-300 w-full hover:bg-white/30'>
+      <h3 className='text-white font-bold text-xl mb-2'>Time of Day (Optional)</h3>
+      <div className='flex flex-wrap gap-2'>
+        {timeOptions.map((option, index) => (
+          <div
+            key={option}
+            style={{ 
+              animation: 'slideUp 0.3s ease-out forwards',
+              animationDelay: `${index * 30}ms`,
+              opacity: '0'
+            }}
+            className={`cursor-pointer p-2 px-3 rounded-lg transition-all duration-200 hover:bg-white/20 text-white
+              ${selectedTimeOfDay === option ? 'bg-white/30 shadow-lg ring-1 ring-white/40 font-bold scale-105' : 'text-white/90'}`}
+            onClick={() => timeHandler(option)}
+          >
+            {option}
+          </div>
+        ))}
+      </div>
+    </div>
+  ), [selectedTimeOfDay, timeHandler]);
   
   return (
     <div className='flex h-screen w-full bg-gradient-to-br from-primary via-pink-400 via-70% to-tertiar flex-col overflow-auto'>
@@ -613,40 +700,11 @@ export default function Dashboard() {
           
           {showAdditionalOptions && (
             <div className='w-full grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-fadeIn'>
-              <FilterOption
-                title="Mood (Optional)"
-                options={moodOptions}
-                selectedValue={selectedMood}
-                onSelect={moodHandler}
-              />
-              
-              <FilterOption
-                title="BPM Range (Optional)"
-                options={bpmRanges}
-                selectedValue={selectedBPM}
-                onSelect={bpmHandler}
-              />
-              
-              <FilterOption
-                title="Activity (Optional)"
-                options={activityOptions}
-                selectedValue={selectedActivity}
-                onSelect={activityHandler}
-              />
-              
-              <FilterOption
-                title="Era (Optional)"
-                options={eraOptions}
-                selectedValue={selectedEra}
-                onSelect={eraHandler}
-              />
-              
-              <FilterOption
-                title="Time of Day (Optional)"
-                options={timeOptions}
-                selectedValue={selectedTimeOfDay}
-                onSelect={timeHandler}
-              />
+              {MoodFilter}
+              {BPMFilter}
+              {ActivityFilter}
+              {EraFilter}
+              {TimeFilter}
               
               <div className='bg-white/20 backdrop-blur-md rounded-xl p-4 ring-1 ring-white/30 shadow-xl
                 hover:shadow-2xl transition-all duration-300 w-full hover:bg-white/30'>
