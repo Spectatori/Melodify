@@ -20,7 +20,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     'playlist-read-private',
     'playlist-read-collaborative',
     'user-library-read',
-    'user-library-modify'
+    'user-library-modify',
+    'ugc-image-upload'       
   ].join(' ');
   
   const spotifyAuthUrl = `https://accounts.spotify.com/authorize?` +
@@ -28,7 +29,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     `response_type=code&` +
     `redirect_uri=${redirectUri}&` +
     `scope=${encodeURIComponent(scopes)}&` +
-    `show_dialog=true`; // This forces Spotify to show the permission dialog again
+    `show_dialog=true&` +       // This forces Spotify to show the permission dialog again
+    `approval_prompt=force`;    // Extra parameter to ensure permission dialog shows
   
   console.log("Redirecting to Spotify with scopes:", scopes);
   
