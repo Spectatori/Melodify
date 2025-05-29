@@ -1,9 +1,7 @@
-import { LoaderFunctionArgs, redirect, ActionFunctionArgs } from '@remix-run/node';
-import { useLoaderData } from '@remix-run/react';
-import { useState, useEffect } from 'react';
+import { LoaderFunctionArgs, redirect, ActionFunctionArgs, json } from '@remix-run/node';
+import { useLoaderData, useFetcher, Link } from '@remix-run/react';
+import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { sessionStorage } from '~/services/session.server';
-import { useFetcher } from "@remix-run/react";
-import { Link } from "@remix-run/react";
 import UserMenu from '~/components/layout/UserMenu';
 import { genreMap, 
   moodOptions, 
@@ -55,18 +53,18 @@ interface ActionResponse {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const session = await sessionStorage.getSession(request.headers.get('Cookie'));
   const user = session.get('user');
-  if (!user) return redirect('/login') as unknown as ActionResponse;
+  if (!user) return redirect('/login');
   
   // Get user's existing playlists
   const existingPlaylists = getUserPlaylists(user.id);
   
-  return { user, existingPlaylists };
+  return json({ user, existingPlaylists });
 };
 
-export const action = async ({ request }: ActionFunctionArgs): Promise<ActionResponse> => {
+export const action = async ({ request }: ActionFunctionArgs) => {
   const session = await sessionStorage.getSession(request.headers.get('Cookie'));
   const user = session.get('user');
-  if (!user) return redirect('/login') as unknown as ActionResponse;
+  if (!user) return redirect('/login');
   
   const formData = await request.formData();
   const actionType = formData.get('actionType')?.toString();
@@ -74,25 +72,25 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionRes
   if (actionType === 'savePlaylist') {
     const playlistData = formData.get('playlistData')?.toString();
     if (!playlistData) {
-      return { error: 'No playlist data provided' };
+      return json({ error: 'No playlist data provided' });
     }
     
     try {
       const playlist: PlaylistRecommendation = JSON.parse(playlistData);
-      playlist.userId = user.id; // Ensure playlist is associated with current user
+      playlist.userId = user.id;
       
       const savedPlaylist = savePlaylist(playlist);
-      return { success: true, playlist: savedPlaylist };
+      return json({ success: true, playlist: savedPlaylist });
     } catch (error) {
       console.error('Error saving playlist:', error);
-      return { error: 'Failed to save playlist' };
+      return json({ error: 'Failed to save playlist' });
     }
   }
   
   if (actionType === 'deletePlaylist') {
     const playlistId = formData.get('playlistId')?.toString();
     if (!playlistId) {
-      return { error: 'No playlist ID provided' };
+      return json({ error: 'No playlist ID provided' });
     }
     
     try {
@@ -100,13 +98,13 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionRes
       const deleted = deletePlaylist(playlistId, user.id);
       
       if (deleted) {
-        return { success: true, deletedId: playlistId };
+        return json({ success: true, deletedId: playlistId });
       } else {
-        return { error: 'Playlist not found or access denied' };
+        return json({ error: 'Playlist not found or access denied' });
       }
     } catch (error) {
       console.error('Error deleting playlist:', error);
-      return { error: 'Failed to delete playlist' };
+      return json({ error: 'Failed to delete playlist' });
     }
   }
   
@@ -115,30 +113,30 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<ActionRes
       const { clearUserPlaylists } = await import('~/services/playlist.server');
       const clearedCount = clearUserPlaylists(user.id);
       
-      return { success: true, clearedCount };
+      return json({ success: true, clearedCount });
     } catch (error) {
       console.error('Error clearing all playlists:', error);
-      return { error: 'Failed to clear all playlists' };
+      return json({ error: 'Failed to clear all playlists' });
     }
   }
   
   if (actionType === 'generateNaming') {
     const userOptionsData = formData.get('userOptions')?.toString();
     if (!userOptionsData) {
-      return { error: 'No user options provided' };
+      return json({ error: 'No user options provided' });
     }
     
     try {
       const userOptions = JSON.parse(userOptionsData);
       const naming = await generatePlaylistNaming(userOptions);
-      return { success: true, naming };
+      return json({ success: true, naming });
     } catch (error) {
       console.error('Error generating playlist naming:', error);
-      return { error: 'Failed to generate playlist naming' };
+      return json({ error: 'Failed to generate playlist naming' });
     }
   }
   
-  return { error: 'Invalid action' };
+  return json({ error: 'Invalid action' });
 };
 
 export default function Dashboard() {
@@ -157,89 +155,16 @@ export default function Dashboard() {
   const [playlists, setPlaylists] = useState<PlaylistRecommendation[]>(existingPlaylists || []);
   const [showAdditionalOptions, setShowAdditionalOptions] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [deletingPlaylistId, setDeletingPlaylistId] = useState<string | null>(null);
   
-  interface FetcherData {
-    content: string;
-    error?: string;
-    warning?: string;
-  }
-
   const llamaFetcher = useFetcher<FetcherData>();
   const saveFetcher = useFetcher<ActionResponse>();
   const deleteFetcher = useFetcher<ActionResponse>();
   const clearAllFetcher = useFetcher<ActionResponse>();
   
-  // Handle save playlist response
-  useEffect(() => {
-    if (saveFetcher.state === 'idle' && saveFetcher.data) {
-      if (saveFetcher.data.error) {
-        console.error("Error saving playlist:", saveFetcher.data.error);
-        setErrorMessage(saveFetcher.data.error);
-      } else if (saveFetcher.data.success) {
-        console.log("Playlist saved successfully");
-      }
-    }
-  }, [saveFetcher]);
-  
-  // Handle delete playlist response  
-  useEffect(() => {
-    if (deleteFetcher.state === 'idle' && deleteFetcher.data) {
-      if (deleteFetcher.data.error) {
-        console.error("Error deleting playlist:", deleteFetcher.data.error);
-        setErrorMessage(deleteFetcher.data.error);
-      } else if (deleteFetcher.data.success && deleteFetcher.data.deletedId) {
-        console.log("Playlist deleted successfully");
-        // Remove the deleted playlist from local state
-        setPlaylists(prev => prev.filter(playlist => playlist.id !== deleteFetcher.data?.deletedId));
-        setErrorMessage(null);
-      }
-    }
-  }, [deleteFetcher]);
-  
-  // Handle clear all playlists response
-  useEffect(() => {
-    if (clearAllFetcher.state === 'idle' && clearAllFetcher.data) {
-      if (clearAllFetcher.data.error) {
-        console.error("Error clearing all playlists:", clearAllFetcher.data.error);
-        setErrorMessage(clearAllFetcher.data.error);
-      } else if (clearAllFetcher.data.success) {
-        console.log(`Cleared ${clearAllFetcher.data.clearedCount || 0} playlists`);
-        // Clear all playlists from local state
-        setPlaylists([]);
-        setErrorMessage(null);
-      }
-    }
-  }, [clearAllFetcher]);
-  
-  const handleDeletePlaylist = (playlistId: string, playlistName: string) => {
-    if (confirm(`Are you sure you want to delete "${playlistName}"? This action cannot be undone.`)) {
-      const formData = new FormData();
-      formData.append('actionType', 'deletePlaylist');
-      formData.append('playlistId', playlistId);
-      
-      deleteFetcher.submit(formData, { method: 'post' });
-    }
-  };
-  
-  const handleClearAllPlaylists = () => {
-    if (playlists.length === 0) {
-      setErrorMessage("No playlists to clear.");
-      return;
-    }
-    
-    if (confirm(`Are you sure you want to delete ALL ${playlists.length} playlists? This action cannot be undone.`)) {
-      const formData = new FormData();
-      formData.append('actionType', 'clearAllPlaylists');
-      
-      clearAllFetcher.submit(formData, { method: 'post' });
-    }
-  };
-  
-  const handleLlamaClick = () => {
-    // Reset any previous error message
+  const handleLlamaClick = useCallback(() => {
     setErrorMessage(null);
     
-    // Build a more detailed prompt based on all selected filters
     let prompt = `Create a playlist of Spotify songs`;
     
     if (selectedSubgenre) {
@@ -277,11 +202,9 @@ export default function Dashboard() {
     console.log("Submitting Enhanced Llama request with prompt:", prompt);
     setIsLoading(true);
     
-    // Create form data with all the selected filters
     const formData = new FormData();
     formData.append("prompt", prompt);
     
-    // Add all the filter options to help with Last.fm context building
     if (selectedGenre) formData.append("genre", selectedGenre);
     if (selectedSubgenre) formData.append("subgenre", selectedSubgenre);
     if (selectedMood) formData.append("mood", selectedMood);
@@ -291,23 +214,15 @@ export default function Dashboard() {
     if (selectedTimeOfDay) formData.append("timeOfDay", selectedTimeOfDay);
     if (useWeather && weatherData) formData.append("weather", weatherData.condition);
     
-    llamaFetcher.submit(
-      formData, 
-      { 
-        method: "post", 
-        action: "/api/llama" 
-      }
-    );
-  };
+    llamaFetcher.submit(formData, { method: "post", action: "/api/llama" });
+  }, [selectedGenre, selectedSubgenre, selectedMood, selectedBPM, selectedActivity, selectedEra, selectedTimeOfDay, useWeather, weatherData, llamaFetcher]);
   
-  // Weather API fetch using our utility
+  // Weather API fetch
   useEffect(() => {
     const getWeatherData = async () => {
       try {
         setIsLoadingWeather(true);
         
-        // Use the browser's geolocation API to get user's coordinates
-        // with maximumAge: 0 to force a fresh location reading
         navigator.geolocation.getCurrentPosition(
           async (position) => {
             try {
@@ -317,7 +232,6 @@ export default function Dashboard() {
               setWeatherData(weatherData);
             } catch (error) {
               console.error("Error fetching weather with user location:", error);
-              // Fall back to default location
               const weatherData = await fetchWeather();
               setWeatherData(weatherData);
             } finally {
@@ -326,17 +240,13 @@ export default function Dashboard() {
           },
           async (error) => {
             console.warn("Geolocation error:", error);
-            // Fall back to default location if user denies location access
             const weatherData = await fetchWeather();
             setWeatherData(weatherData);
             setIsLoadingWeather(false);
           },
           {
-            // Force fresh location reading (don't use cached values)
             maximumAge: 0,
-            // High accuracy for better results
             enableHighAccuracy: true,
-            // Timeout after 10 seconds
             timeout: 10000
           }
         );
@@ -364,21 +274,17 @@ export default function Dashboard() {
         setErrorMessage(llamaFetcher.data.error);
       } else if (llamaFetcher.data.content) {
         
-        // Display warning if present
         if (llamaFetcher.data.warning) {
           setErrorMessage(llamaFetcher.data.warning);
         } else {
           setErrorMessage(null);
         }
         
-        // Parse the response into an array of songs
         const songList = llamaFetcher.data.content
           .split('\n')
           .filter(line => line.trim().match(/^\d+\.\s/))
           .map(line => line.trim());
         
-        // Create a new playlist recommendation with simple naming for now
-        // We'll generate the AI name separately to avoid infinite loops
         const newPlaylist: PlaylistRecommendation = {
           id: Date.now().toString(),
           name: generateSimplePlaylistName(),
@@ -398,20 +304,16 @@ export default function Dashboard() {
           }
         };
         
-        // Save playlist to server
         const formData = new FormData();
         formData.append('actionType', 'savePlaylist');
         formData.append('playlistData', JSON.stringify(newPlaylist));
         
         saveFetcher.submit(formData, { method: 'post' });
-        
-        // Add to local playlists array immediately for better UX
         setPlaylists(prev => [newPlaylist, ...prev]);
       }
     }
-  }, [llamaFetcher.state, llamaFetcher.data]); // Added dependencies to prevent infinite loop
+  }, [llamaFetcher.state, llamaFetcher.data]);
   
-  // Handle save playlist response
   useEffect(() => {
     if (saveFetcher.state === 'idle' && saveFetcher.data) {
       if (saveFetcher.data.error) {
@@ -423,7 +325,88 @@ export default function Dashboard() {
     }
   }, [saveFetcher]);
   
-  const generateSimplePlaylistName = () => {
+  useEffect(() => {
+    if (deleteFetcher.state === 'idle' && deleteFetcher.data) {
+      if (deleteFetcher.data.error) {
+        console.error("Error deleting playlist:", deleteFetcher.data.error);
+        setErrorMessage(deleteFetcher.data.error);
+      } else if (deleteFetcher.data.success && deleteFetcher.data.deletedId) {
+        console.log("Playlist deleted successfully");
+        setTimeout(() => {
+          setPlaylists(prev => prev.filter(playlist => playlist.id !== deleteFetcher.data?.deletedId));
+          setDeletingPlaylistId(null);
+        }, 300);
+        setErrorMessage(null);
+      }
+      setDeletingPlaylistId(null);
+    }
+  }, [deleteFetcher]);
+  
+  useEffect(() => {
+    if (clearAllFetcher.state === 'idle' && clearAllFetcher.data) {
+      if (clearAllFetcher.data.error) {
+        console.error("Error clearing all playlists:", clearAllFetcher.data.error);
+        setErrorMessage(clearAllFetcher.data.error);
+      } else if (clearAllFetcher.data.success) {
+        console.log(`Cleared ${clearAllFetcher.data.clearedCount || 0} playlists`);
+        setTimeout(() => {
+          setPlaylists([]);
+        }, 300);
+        setErrorMessage(null);
+      }
+    }
+  }, [clearAllFetcher]);
+  
+  const handleGenreClick = useCallback((genre: string) => {
+    if (selectedGenre !== genre) {
+      setSelectedGenre(genre);
+      setSelectedSubgenre(null);
+      setErrorMessage(null);
+    }
+  }, [selectedGenre]);
+  
+  const handleSubgenreClick = useCallback((subgenre: string) => {
+    const newSubgenre = subgenre === selectedSubgenre ? null : subgenre;
+    if (newSubgenre !== selectedSubgenre) {
+      setSelectedSubgenre(newSubgenre);
+      setErrorMessage(null);
+    }
+  }, [selectedSubgenre]);
+  
+  const handleFilterClick = useCallback((currentValue: string | null, newValue: string, setter: (value: string | null) => void) => {
+    const finalValue = currentValue === newValue ? null : newValue;
+    if (finalValue !== currentValue) {
+      setter(finalValue);
+      setErrorMessage(null);
+    }
+  }, []);
+  
+  const handleDeletePlaylist = useCallback((playlistId: string, playlistName: string) => {
+    if (confirm(`Are you sure you want to delete "${playlistName}"? This action cannot be undone.`)) {
+      setDeletingPlaylistId(playlistId);
+      const formData = new FormData();
+      formData.append('actionType', 'deletePlaylist');
+      formData.append('playlistId', playlistId);
+      
+      deleteFetcher.submit(formData, { method: 'post' });
+    }
+  }, [deleteFetcher]);
+  
+  const handleClearAllPlaylists = useCallback(() => {
+    if (playlists.length === 0) {
+      setErrorMessage("No playlists to clear.");
+      return;
+    }
+    
+    if (confirm(`Are you sure you want to delete ALL ${playlists.length} playlists? This action cannot be undone.`)) {
+      const formData = new FormData();
+      formData.append('actionType', 'clearAllPlaylists');
+      
+      clearAllFetcher.submit(formData, { method: 'post' });
+    }
+  }, [playlists.length, clearAllFetcher]);
+  
+  const generateSimplePlaylistName = useCallback(() => {
     const parts = [];
     
     if (selectedMood) {
@@ -447,9 +430,9 @@ export default function Dashboard() {
     }
     
     return parts.join(' ') + ' Mix';
-  };
+  }, [selectedMood, selectedSubgenre, selectedGenre, selectedActivity, selectedTimeOfDay]);
   
-  const generateSimplePlaylistDescription = () => {
+  const generateSimplePlaylistDescription = useCallback(() => {
     let description = "A personalized playlist";
     
     const elements = [];
@@ -480,10 +463,17 @@ export default function Dashboard() {
     description += ". Generated by your AI music assistant.";
     
     return description;
-  };
+  }, [selectedGenre, selectedSubgenre, selectedMood, selectedActivity, selectedEra]);
   
-  // The GenreSelector component
-  const GenreSelector = () => (
+  // Memoized filter handlers
+  const moodHandler = useCallback((value: string) => handleFilterClick(selectedMood, value, setSelectedMood), [selectedMood, handleFilterClick]);
+  const bpmHandler = useCallback((value: string) => handleFilterClick(selectedBPM, value, setSelectedBPM), [selectedBPM, handleFilterClick]);
+  const activityHandler = useCallback((value: string) => handleFilterClick(selectedActivity, value, setSelectedActivity), [selectedActivity, handleFilterClick]);
+  const eraHandler = useCallback((value: string) => handleFilterClick(selectedEra, value, setSelectedEra), [selectedEra, handleFilterClick]);
+  const timeHandler = useCallback((value: string) => handleFilterClick(selectedTimeOfDay, value, setSelectedTimeOfDay), [selectedTimeOfDay, handleFilterClick]);
+  
+  // Memoized components
+  const GenreSelector = useMemo(() => (
     <div className='bg-white/20 backdrop-blur-md rounded-xl p-4 w-full ring-1 ring-white/30 shadow-xl
       hover:shadow-2xl transition-all duration-300 hover:bg-white/30'>
       <h3 className='text-white font-bold text-xl mb-2'>Genre</h3>
@@ -499,62 +489,60 @@ export default function Dashboard() {
         {Object.keys(genreMap).map((genre, index) => (
           <div 
           key={genre}
-          className={`cursor-pointer p-3 rounded-lg transition-all duration-300 hover:bg-white/20 animate-slide-up
+          className={`cursor-pointer p-3 rounded-lg transition-all duration-200 hover:bg-white/20 animate-slide-up
             ${selectedGenre === genre ? 'bg-white/30 text-white shadow-lg ring-1 ring-white/40 scale-105' : ''}`}
           style={{
             animationFillMode: 'forwards',
             animationDelay: `${index * 50}ms`
           }}
-          onClick={() => {
-            setSelectedGenre(genre);
-            setSelectedSubgenre(null);
-            setErrorMessage(null);
-          }}
+          onClick={() => handleGenreClick(genre)}
         >
           {genre}
         </div>
         ))}
       </div>
     </div>
-  );
+  ), [selectedGenre, handleGenreClick]);
   
-  // The SubgenreSelector component
-  const SubgenreSelector = () => (
-    <div className='bg-white/20 backdrop-blur-md rounded-xl p-4 ring-1 ring-white/30 shadow-xl
-      hover:shadow-2xl transition-all duration-300 hover:bg-white/30'>
-      <h3 className='text-white font-bold text-xl mb-2'>Subgenre (Optional)</h3>
-      <div className='flex flex-col font-bold text-white text-xl max-h-72 overflow-y-auto gap-2 pr-4
-      [&::-webkit-scrollbar]:w-1.5
-      [&::-webkit-scrollbar]:hover:w-2
-      [&::-webkit-scrollbar-track]:rounded-xl
-      [&::-webkit-scrollbar-track]:bg-white/10
-      [&::-webkit-scrollbar-thumb]:rounded-lg
-      [&::-webkit-scrollbar-thumb]:bg-orange-200/30
-      [&::-webkit-scrollbar-thumb]:hover:bg-orange-200/40
-      '>
-        {selectedGenre && genreMap[selectedGenre as keyof typeof genreMap].map((subgenre: string, index: number) => (
-          <div
-            key={subgenre}
-            style={{ 
-              animation: 'slideUp 0.5s ease-out forwards',
-              animationDelay: `${index * 50}ms`,
-              opacity: '0'
-            }}
-            className={`cursor-pointer p-3 rounded-lg transition-all duration-300 hover:bg-white/20
-              ${selectedSubgenre === subgenre ? 'bg-white/30 text-white shadow-lg ring-1 ring-white/40 scale-105' : ''}`}
-            onClick={() => {
-              setSelectedSubgenre(subgenre === selectedSubgenre ? null : subgenre);
-              setErrorMessage(null);
-            }}
-          >
-            {subgenre}
-          </div>
-        ))}
+  const SubgenreSelector = useMemo(() => {
+    if (!selectedGenre) return null;
+    
+    const subgenres = genreMap[selectedGenre as keyof typeof genreMap];
+    
+    return (
+      <div className='bg-white/20 backdrop-blur-md rounded-xl p-4 ring-1 ring-white/30 shadow-xl
+        hover:shadow-2xl transition-all duration-300 hover:bg-white/30'>
+        <h3 className='text-white font-bold text-xl mb-2'>Subgenre (Optional)</h3>
+        <div className='flex flex-col font-bold text-white text-xl max-h-72 overflow-y-auto gap-2 pr-4
+        [&::-webkit-scrollbar]:w-1.5
+        [&::-webkit-scrollbar]:hover:w-2
+        [&::-webkit-scrollbar-track]:rounded-xl
+        [&::-webkit-scrollbar-track]:bg-white/10
+        [&::-webkit-scrollbar-thumb]:rounded-lg
+        [&::-webkit-scrollbar-thumb]:bg-orange-200/30
+        [&::-webkit-scrollbar-thumb]:hover:bg-orange-200/40
+        '>
+          {subgenres.map((subgenre: string, index: number) => (
+            <div
+              key={subgenre}
+              style={{ 
+                animation: 'slideUp 0.5s ease-out forwards',
+                animationDelay: `${index * 50}ms`,
+                opacity: '0'
+              }}
+              className={`cursor-pointer p-3 rounded-lg transition-all duration-200 hover:bg-white/20
+                ${selectedSubgenre === subgenre ? 'bg-white/30 text-white shadow-lg ring-1 ring-white/40 scale-105' : ''}`}
+              onClick={() => handleSubgenreClick(subgenre)}
+            >
+              {subgenre}
+            </div>
+          ))}
+        </div>
       </div>
-    </div>
-  );
+    );
+  }, [selectedGenre, selectedSubgenre, handleSubgenreClick]);
   
-  const FilterOption = ({ 
+  const FilterOption = memo(({ 
     title, 
     options, 
     selectedValue, 
@@ -577,148 +565,16 @@ export default function Dashboard() {
               animationDelay: `${index * 30}ms`,
               opacity: '0'
             }}
-            className={`cursor-pointer p-2 px-3 rounded-lg transition-all duration-300 hover:bg-white/20 text-white
+            className={`cursor-pointer p-2 px-3 rounded-lg transition-all duration-200 hover:bg-white/20 text-white
               ${selectedValue === option ? 'bg-white/30 shadow-lg ring-1 ring-white/40 font-bold scale-105' : 'text-white/90'}`}
-            onClick={() => {
-              onSelect(selectedValue === option ? '' : option);
-              setErrorMessage(null);
-            }}
+            onClick={() => onSelect(selectedValue === option ? '' : option)}
           >
             {option}
           </div>
         ))}
       </div>
     </div>
-  );
-  
-  const PlaylistsList = () => (
-    <div className='mt-6 w-full max-w-4xl mx-auto'>
-      <div className="flex items-center justify-between mb-4">
-        <h3 className='text-white font-bold text-2xl'>Your Generated Playlists</h3>
-        
-        {playlists.length > 0 && (
-          <button
-            onClick={handleClearAllPlaylists}
-            disabled={clearAllFetcher.state === 'submitting'}
-            className='bg-red-600/80 hover:bg-red-500 text-white font-bold py-2 px-4 rounded-lg
-              transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed
-              hover:scale-105 disabled:hover:scale-100 flex items-center gap-2 text-sm'
-          >
-            {clearAllFetcher.state === 'submitting' ? (
-              <>
-                <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin"></div>
-                Clearing...
-              </>
-            ) : (
-              <>
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-                Clear All ({playlists.length})
-              </>
-            )}
-          </button>
-        )}
-      </div>
-      
-      {errorMessage && (
-        <div className="mb-4 py-2 px-4 bg-white/20 rounded-lg text-white/90 text-sm">
-          {errorMessage}
-        </div>
-      )}
-      
-      {playlists.length === 0 ? (
-        <div className="text-center py-12">
-          <div className="text-white/60 text-6xl mb-4">🎵</div>
-          <h4 className="text-white/80 text-xl font-medium mb-2">No playlists yet</h4>
-          <p className="text-white/60 text-sm">Create your first playlist by selecting a genre and clicking "Generate Playlist"</p>
-        </div>
-      ) : (
-        <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
-          {playlists.map((playlist, index) => (
-            <div 
-              key={playlist.id}
-              className='bg-white/20 backdrop-blur-md rounded-xl p-6 ring-1 ring-white/30 shadow-xl
-                hover:shadow-2xl transition-all duration-300 hover:bg-white/30 relative group'
-              style={{ 
-                animation: 'fadeIn 0.5s ease-out forwards',
-                animationDelay: `${index * 100}ms`,
-                opacity: '0'
-              }}
-            >
-              {/* Delete button */}
-              <button
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  handleDeletePlaylist(playlist.id, playlist.name);
-                }}
-                disabled={deleteFetcher.state === 'submitting'}
-                className="absolute top-2 right-2 p-2 text-white/60 hover:text-red-400 rounded-full 
-                  hover:bg-red-500/20 transition-all duration-300 opacity-0 group-hover:opacity-100
-                  disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Delete playlist"
-              >
-                {deleteFetcher.state === 'submitting' ? (
-                  <div className="w-5 h-5 rounded-full border-2 border-current border-t-transparent animate-spin"></div>
-                ) : (
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                )}
-              </button>
-              
-              {/* Playlist content - wrapped in Link */}
-              <Link 
-                to={`/playlist/${playlist.id}`}
-                className='block h-full'
-              >
-                <div className="flex items-start justify-between mb-3 pr-8">
-                  <h4 className='text-white font-bold text-lg line-clamp-2'>{playlist.name}</h4>
-                  <div className="text-white/60 text-2xl">🎵</div>
-                </div>
-                
-                <p className='text-white/80 text-sm mb-3 line-clamp-2'>{playlist.description}</p>
-                
-                <div className="flex items-center justify-between text-white/60 text-xs">
-                  <span>{playlist.songs.length} songs</span>
-                  <span>{new Date(playlist.createdAt).toLocaleDateString()}</span>
-                </div>
-                
-                <div className="mt-3 flex flex-wrap gap-1">
-                  {playlist.filters.genre && (
-                    <span className="bg-white/20 px-2 py-1 rounded text-xs text-white">
-                      {playlist.filters.genre}
-                    </span>
-                  )}
-                  {playlist.filters.mood && (
-                    <span className="bg-white/20 px-2 py-1 rounded text-xs text-white">
-                      {playlist.filters.mood}
-                    </span>
-                  )}
-                  {playlist.filters.era && (
-                    <span className="bg-white/20 px-2 py-1 rounded text-xs text-white">
-                      {playlist.filters.era}
-                    </span>
-                  )}
-                </div>
-              </Link>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-  
-  const LoadingIndicator = () => (
-    <div className="fixed bottom-4 right-10 bg-white/20 backdrop-blur-md px-4 py-2 rounded-lg ring-1 ring-white/30 shadow-lg
-     animate-pulse">
-      <div className="flex items-center space-x-2">
-        <div className="w-4 h-4 rounded-full bg-white animate-bounce"></div>
-        <p className="text-white">Creating playlist...</p>
-      </div>
-    </div>
-  );
+  ));
   
   return (
     <div className='flex h-screen w-full bg-gradient-to-br from-primary via-pink-400 via-70% to-tertiar flex-col overflow-auto'>
@@ -730,16 +586,11 @@ export default function Dashboard() {
         </h1>
         
         <div className='flex flex-wrap gap-8'>
-          {/* Main selectors row */}
           <div className='grid grid-cols-1 md:grid-cols-2 gap-6 w-full'>
-            <GenreSelector />
-            
-            {selectedGenre && (
-              <SubgenreSelector />
-            )}
+            {GenreSelector}
+            {SubgenreSelector}
           </div>
           
-          {/* Additional options toggle */}
           <div className='w-full flex justify-center mt-2 mb-4'>
             <button
               onClick={() => setShowAdditionalOptions(!showAdditionalOptions)}
@@ -760,45 +611,43 @@ export default function Dashboard() {
             </button>
           </div>
           
-          {/* Additional options section */}
           {showAdditionalOptions && (
             <div className='w-full grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-fadeIn'>
               <FilterOption
                 title="Mood (Optional)"
                 options={moodOptions}
                 selectedValue={selectedMood}
-                onSelect={(value) => setSelectedMood(value || null)}
+                onSelect={moodHandler}
               />
               
               <FilterOption
                 title="BPM Range (Optional)"
                 options={bpmRanges}
                 selectedValue={selectedBPM}
-                onSelect={(value) => setSelectedBPM(value || null)}
+                onSelect={bpmHandler}
               />
               
               <FilterOption
                 title="Activity (Optional)"
                 options={activityOptions}
                 selectedValue={selectedActivity}
-                onSelect={(value) => setSelectedActivity(value || null)}
+                onSelect={activityHandler}
               />
               
               <FilterOption
                 title="Era (Optional)"
                 options={eraOptions}
                 selectedValue={selectedEra}
-                onSelect={(value) => setSelectedEra(value || null)}
+                onSelect={eraHandler}
               />
               
               <FilterOption
                 title="Time of Day (Optional)"
                 options={timeOptions}
                 selectedValue={selectedTimeOfDay}
-                onSelect={(value) => setSelectedTimeOfDay(value || null)}
+                onSelect={timeHandler}
               />
               
-              {/* Weather option */}
               <div className='bg-white/20 backdrop-blur-md rounded-xl p-4 ring-1 ring-white/30 shadow-xl
                 hover:shadow-2xl transition-all duration-300 w-full hover:bg-white/30'>
                 <div className='flex items-center justify-between'>
@@ -841,7 +690,6 @@ export default function Dashboard() {
                     onClick={() => {
                       setIsLoadingWeather(true);
                       
-                      // Request new location and weather data
                       navigator.geolocation.getCurrentPosition(
                         async (position) => {
                           try {
@@ -880,7 +728,6 @@ export default function Dashboard() {
           )}
         </div>
         
-        {/* Button section */}
         <div className='flex justify-center mt-8'>
           <button 
             className='bg-white/20 backdrop-blur-md px-8 py-4 text-white rounded-lg text-xl
@@ -894,13 +741,133 @@ export default function Dashboard() {
           </button>
         </div>
         
-        {/* Playlists display */}
-        {playlists.length > 0 && <PlaylistsList />}
+        {playlists.length > 0 && (
+          <div className='mt-6 w-full max-w-4xl mx-auto'>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className='text-white font-bold text-2xl'>Your Generated Playlists</h3>
+              
+              <button
+                onClick={handleClearAllPlaylists}
+                disabled={clearAllFetcher.state === 'submitting'}
+                className='bg-red-600/80 hover:bg-red-500 text-white font-bold py-2 px-4 rounded-lg
+                  transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed
+                  hover:scale-105 disabled:hover:scale-100 flex items-center gap-2 text-sm'
+              >
+                {clearAllFetcher.state === 'submitting' ? (
+                  <>
+                    <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin"></div>
+                    Clearing...
+                  </>
+                ) : (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    Clear All ({playlists.length})
+                  </>
+                )}
+              </button>
+            </div>
+            
+            {errorMessage && (
+              <div className="mb-4 py-2 px-4 bg-white/20 rounded-lg text-white/90 text-sm">
+                {errorMessage}
+              </div>
+            )}
+            
+            <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
+              {playlists.map((playlist, index) => (
+                <div 
+                  key={playlist.id}
+                  className={`bg-white/20 backdrop-blur-md rounded-xl p-6 ring-1 ring-white/30 shadow-xl
+                    hover:shadow-2xl transition-all duration-300 hover:bg-white/30 relative group
+                    ${deletingPlaylistId === playlist.id ? 'opacity-50 scale-95 pointer-events-none' : ''}`}
+                  style={{ 
+                    animation: 'fadeIn 0.5s ease-out forwards',
+                    animationDelay: `${index * 100}ms`,
+                    opacity: '0'
+                  }}
+                >
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleDeletePlaylist(playlist.id, playlist.name);
+                    }}
+                    disabled={deleteFetcher.state === 'submitting' || deletingPlaylistId === playlist.id}
+                    className="absolute top-2 right-2 p-2 text-white/60 hover:text-red-400 rounded-full 
+                      hover:bg-red-500/20 transition-all duration-200 opacity-0 group-hover:opacity-100
+                      disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Delete playlist"
+                  >
+                    {deletingPlaylistId === playlist.id ? (
+                      <div className="w-5 h-5 rounded-full border-2 border-current border-t-transparent animate-spin"></div>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    )}
+                  </button>
+                  
+                  <Link 
+                    to={`/playlist/${playlist.id}`}
+                    className='block h-full'
+                  >
+                    <div className="flex items-start justify-between mb-3 pr-8">
+                      <h4 className='text-white font-bold text-lg line-clamp-2'>{playlist.name}</h4>
+                      <div className="text-white/60 text-2xl">🎵</div>
+                    </div>
+                    
+                    <p className='text-white/80 text-sm mb-3 line-clamp-2'>{playlist.description}</p>
+                    
+                    <div className="flex items-center justify-between text-white/60 text-xs">
+                      <span>{playlist.songs.length} songs</span>
+                      <span>{new Date(playlist.createdAt).toLocaleDateString()}</span>
+                    </div>
+                    
+                    <div className="mt-3 flex flex-wrap gap-1">
+                      {playlist.filters.genre && (
+                        <span className="bg-white/20 px-2 py-1 rounded text-xs text-white">
+                          {playlist.filters.genre}
+                        </span>
+                      )}
+                      {playlist.filters.mood && (
+                        <span className="bg-white/20 px-2 py-1 rounded text-xs text-white">
+                          {playlist.filters.mood}
+                        </span>
+                      )}
+                      {playlist.filters.era && (
+                        <span className="bg-white/20 px-2 py-1 rounded text-xs text-white">
+                          {playlist.filters.era}
+                        </span>
+                      )}
+                    </div>
+                  </Link>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        {playlists.length === 0 && (
+          <div className="mt-6 text-center py-12">
+            <div className="text-white/60 text-6xl mb-4">🎵</div>
+            <h4 className="text-white/80 text-xl font-medium mb-2">No playlists yet</h4>
+            <p className="text-white/60 text-sm">Create your first playlist by selecting a genre and clicking "Generate Playlist"</p>
+          </div>
+        )}
       </div>
       
-      {isLoading && <LoadingIndicator />}
+      {isLoading && (
+        <div className="fixed bottom-4 right-10 bg-white/20 backdrop-blur-md px-4 py-2 rounded-lg ring-1 ring-white/30 shadow-lg
+         animate-pulse">
+          <div className="flex items-center space-x-2">
+            <div className="w-4 h-4 rounded-full bg-white animate-bounce"></div>
+            <p className="text-white">Creating playlist...</p>
+          </div>
+        </div>
+      )}
       
-      {/* Add some animations to the global styles */}
       <style>{`
         @keyframes fadeIn {
           from { opacity: 0; transform: translateY(10px); }
@@ -933,8 +900,8 @@ export default function Dashboard() {
           transform: scale(1.05);
         }
         
-        .scale-102 {
-          transform: scale(1.02);
+        .scale-95 {
+          transform: scale(0.95);
         }
         
         .line-clamp-2 {
@@ -942,6 +909,20 @@ export default function Dashboard() {
           -webkit-line-clamp: 2;
           -webkit-box-orient: vertical;
           overflow: hidden;
+        }
+        
+        * {
+          transition-property: opacity, transform, background-color, border-color, color, box-shadow;
+          transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .no-flash {
+          backface-visibility: hidden;
+          perspective: 1000px;
+        }
+        
+        .hover-smooth:hover {
+          transform: translateY(-2px);
         }
       `}</style>
     </div>
