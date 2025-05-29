@@ -18,7 +18,7 @@ function validateEnvironmentVars() {
 
 const { SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_CALLBACK_URL } = validateEnvironmentVars();
 
-// UPDATED: Added playlist creation and management scopes
+// UPDATED: Added playlist creation and management scopes + IMAGE UPLOAD
 const spotifyScopes = [
   'user-read-email',
   'user-read-private',
@@ -27,7 +27,8 @@ const spotifyScopes = [
   'playlist-read-private',     // REQUIRED: Read user's private playlists
   'playlist-read-collaborative', // REQUIRED: Read collaborative playlists
   'user-library-read',         // Optional: Read user's saved tracks
-  'user-library-modify'        // Optional: Modify user's saved tracks
+  'user-library-modify',       // Optional: Modify user's saved tracks
+  'ugc-image-upload'           // REQUIRED: Upload custom images to playlists
 ];
 
 const spotifyStrategy = new SpotifyStrategy(
