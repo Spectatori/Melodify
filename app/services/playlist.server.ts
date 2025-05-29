@@ -6,6 +6,7 @@ interface PlaylistRecommendation {
   songs: string[];
   createdAt: string;
   userId: string;
+  coverImageUrl?: string;
   filters: {
     genre?: string;
     subgenre?: string;
