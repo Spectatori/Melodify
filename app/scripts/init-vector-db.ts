@@ -1,5 +1,3 @@
-// scripts/init-vector-db.ts
-// Standalone TypeScript initialization script for Remix projects
 // Usage: npm run init-vector-db
 
 import path from 'path';
