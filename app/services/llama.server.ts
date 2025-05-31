@@ -2,11 +2,13 @@ import fetch from "node-fetch";
 import { buildLastFmContext } from "./lastfm.server";
 import { UserOptions, LastFmContextTrack } from "~/types/lastfm.types";
 import { json, type ActionFunction } from "@remix-run/node";
+import { musicVectorDB, RecommendationRecord } from "~/vector/vector-db-server";
+
 
 // Keep track of previously recommended songs to avoid repetition
 let previousRecommendations: Map<string, Set<string>> = new Map();
 
-export async function callEnhancedLlama(userPrompt: string, userOptions: UserOptions) {
+export async function callEnhancedLlama(userPrompt: string, userOptions: UserOptions, userId: string) {
   console.log("Enhanced Llama function called with prompt:", userPrompt);
   
   try {
@@ -23,6 +25,25 @@ export async function callEnhancedLlama(userPrompt: string, userOptions: UserOpt
     
     if (!hasFilterOption) {
       console.warn("No filter options provided, recommendations may be generic");
+    }
+
+    // STEP 0: Check for similar past recommendations to improve context
+    console.log("🔍 Checking for similar past recommendations...");
+    let similarRecommendations: RecommendationRecord[] = [];
+    try {
+      similarRecommendations = await musicVectorDB.findSimilarRecommendations(
+        userPrompt, 
+        userOptions, 
+        userId, 
+        3 // Get top 3 similar recommendations
+      );
+      
+      if (similarRecommendations.length > 0) {
+        console.log(`✅ Found ${similarRecommendations.length} similar past recommendations`);
+      }
+    } catch (error) {
+      console.error("❌ Error finding similar recommendations:", error);
+      // Continue without similar recommendations
     }
     
     // STEP 1: Fetch songs from Last.fm/Spotify via buildLastFmContext
@@ -59,6 +80,21 @@ export async function callEnhancedLlama(userPrompt: string, userOptions: UserOpt
     
     // Get previously recommended songs for these options
     const previousSongsForOptions = previousRecommendations.get(optionsKey)!;
+    
+    // Add songs from vector DB similar recommendations to avoid repetition
+    if (similarRecommendations.length > 0) {
+      console.log("📚 Adding songs from similar recommendations to avoid duplicates");
+      for (const similarRec of similarRecommendations) {
+        for (const song of similarRec.songs) {
+          // Extract song-artist key for deduplication
+          const matches = song.match(/^\d+\.\s*"([^"]+)"\s*by\s*(.+?)$/);
+          if (matches) {
+            const key = `${matches[1]}-${matches[2].trim()}`.toLowerCase();
+            previousSongsForOptions.add(key);
+          }
+        }
+      }
+    }
     
     // STEP 3: Filter out previously recommended songs
     const newTracks = lastFmTracks.filter(track => {
@@ -99,6 +135,15 @@ export async function callEnhancedLlama(userPrompt: string, userOptions: UserOpt
       const formattedSongs = selectedTracks.map((track, index) => 
         `${index + 1}. "${track.name}" by ${track.artist}`
       );
+
+      // Store in vector database
+      await storeRecommendationInVectorDB(
+        userPrompt,
+        userOptions,
+        userId,
+        formattedSongs.join('\n'),
+        formattedSongs
+      );
       
       return { content: formattedSongs.join('\n') };
     }
@@ -123,7 +168,22 @@ export async function callEnhancedLlama(userPrompt: string, userOptions: UserOpt
       return `${index + 1}. "${track.name}" by ${track.artist}${extraInfo}`;
     }).join('\n');
     
-    // STEP 5: Have Llama choose the best 5 songs from our pool
+    // STEP 5: Build enhanced prompt with similar recommendations context
+    let similarRecommendationsContext = "";
+    if (similarRecommendations.length > 0) {
+      const contextSongs = similarRecommendations
+        .flatMap(rec => rec.songs.slice(0, 3)) // Take first 3 songs from each similar recommendation
+        .slice(0, 8); // Limit to 8 songs total for context
+      
+      similarRecommendationsContext = `
+
+CONTEXT: The user has previously received similar recommendations:
+${contextSongs.join('\n')}
+
+Please consider this history but DO NOT repeat these songs. Instead, find complementary tracks that would work well with their previous preferences.`;
+    }
+
+    // STEP 6: Have Llama choose the best 5 songs from our pool
     const enhancedPrompt = `
 You are a music recommendation assistant. I've already gathered a pool of songs that match the user's criteria from LastFM/Spotify, and I need you to select 5 of them that would make good recommendations.
 
@@ -136,7 +196,7 @@ ${userOptions.mood ? `The mood requested is: ${userOptions.mood}.` : ''}
 ${userOptions.bpm ? `The BPM range is: ${userOptions.bpm}.` : ''}
 ${userOptions.activity ? `The activity context is: ${userOptions.activity}.` : ''}
 ${userOptions.timeOfDay ? `The time of day is: ${userOptions.timeOfDay}.` : ''}
-${userOptions.weather ? `The weather is: ${userOptions.weather}.` : ''}
+${userOptions.weather ? `The weather is: ${userOptions.weather}.` : ''}${similarRecommendationsContext}
 
 Here is the pool of songs from LastFM/Spotify that match these criteria:
 ${formattedTracks}
@@ -150,6 +210,7 @@ INSTRUCTIONS:
 6. Prioritize songs marked as "Genre Match" if present, as they best match the user's genre preference.
 7. If "Recent Release" is marked, those songs are good choices for "Latest Releases" requests.
 8. If a specific era is marked (like "${userOptions.era} Era"), prioritize those songs as they match the user's time period preference.
+9. Consider the user's recommendation history context but avoid repeating previously recommended songs.
 
 Your recommendations:
 `;
@@ -187,7 +248,7 @@ Your recommendations:
     const data = await response.json() as { response: string };
     console.log("Ollama API successful response received");
 
-    // STEP 6: Process the LLM response
+    // STEP 7: Process the LLM response
     // Extract only the numbered list items
     const songLines = data.response.trim().split('\n')
       .filter(line => /^\d+\.\s*"[^"]+"\s*by\s*.+/.test(line.trim()))
@@ -235,7 +296,7 @@ Your recommendations:
       return line.replace(/^\d+\./, `${index + 1}.`);
     });
     
-    // STEP 7: Track these songs as recommended
+    // STEP 8: Track these songs as recommended
     reNumberedSongs.forEach(line => {
       const matches = line.match(/^\d+\.\s*"([^"]+)"\s*by\s*([^(]+)/);
       if (matches) {
@@ -244,6 +305,15 @@ Your recommendations:
         previousSongsForOptions.add(key);
       }
     });
+
+    // STEP 9: Store the recommendation in vector database
+    await storeRecommendationInVectorDB(
+      userPrompt,
+      userOptions,
+      userId,
+      data.response,
+      reNumberedSongs
+    );
     
     // Return the final list of recommendations
     return { content: reNumberedSongs.join('\n') };
@@ -257,6 +327,33 @@ Your recommendations:
   }
 }
 
+// Helper function to store recommendation in vector database
+async function storeRecommendationInVectorDB(
+  userPrompt: string,
+  userOptions: UserOptions,
+  userId: string,
+  aiResponse: string,
+  songs: string[]
+): Promise<void> {
+  try {
+    const recommendationRecord: RecommendationRecord = {
+      id: `${userId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      userId: userId,
+      timestamp: new Date().toISOString(),
+      userPrompt: userPrompt,
+      userOptions: userOptions,
+      aiResponse: aiResponse,
+      songs: songs
+    };
+
+    await musicVectorDB.storeRecommendation(recommendationRecord);
+    console.log(`✅ Stored recommendation in vector database: ${recommendationRecord.id}`);
+  } catch (error) {
+    console.error("❌ Error storing recommendation in vector database:", error);
+    // Don't fail the whole operation if vector storage fails
+  }
+}
+
 export const action: ActionFunction = async ({ request }) => {
   console.log("Enhanced Llama API action function called");
   try {
@@ -264,6 +361,9 @@ export const action: ActionFunction = async ({ request }) => {
     
     // Get the basic prompt
     const prompt = formData.get("prompt")?.toString() || "Suggest me some songs";
+    
+    // Get user ID (you'll need to get this from session)
+    const userId = formData.get("userId")?.toString() || "anonymous";
     
     // Get all the filter options
     const userOptions: UserOptions = {
@@ -279,11 +379,11 @@ export const action: ActionFunction = async ({ request }) => {
     
     console.log("Received options:", userOptions);
     
-    const response = await callEnhancedLlama(prompt, userOptions);
+    const response = await callEnhancedLlama(prompt, userOptions, userId);
     console.log("Returning enhanced API response");
     return json(response);
   } catch (error) {
     console.error("Enhanced API action error:", error);
     return json({ error: (error instanceof Error) ? error.message : String(error) });
   }
-}
+};
