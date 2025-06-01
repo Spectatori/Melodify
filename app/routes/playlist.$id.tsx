@@ -1,7 +1,8 @@
 // app/routes/playlist.$id.tsx
+import React from 'react';
 import { LoaderFunctionArgs, redirect, ActionFunctionArgs } from '@remix-run/node';
 import { useLoaderData, useFetcher, Link } from '@remix-run/react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { sessionStorage } from '~/services/session.server';
 import { getPlaylist, savePlaylist } from '~/services/playlist.server';
 import UserMenu from '~/components/layout/UserMenu';
@@ -26,6 +27,8 @@ interface SpotifyActionSuccess {
   tracksAdded: number;
   totalSongs: number;
   notFoundCount: number;
+  previewUrl?: string;
+  albumArt?: string;
 }
 
 interface SpotifyActionError {
@@ -42,6 +45,242 @@ interface FineTuneResponse {
 }
 
 type SpotifyActionResponse = SpotifyActionSuccess | SpotifyActionError;
+
+// Music Player Modal Component
+interface MusicPlayerModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  songName: string;
+  artistName: string;
+  albumArt?: string;
+  previewUrl?: string;
+  spotifyUrl?: string;
+}
+
+const MusicPlayerModal: React.FC<MusicPlayerModalProps> = ({
+  isOpen,
+  onClose,
+  songName,
+  artistName,
+  albumArt,
+  previewUrl,
+  spotifyUrl
+}) => {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(30); // Spotify previews are 30 seconds
+  const [volume, setVolume] = useState(0.7);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  // Reset state when modal opens/closes
+  useEffect(() => {
+    if (isOpen) {
+      setIsPlaying(false);
+      setCurrentTime(0);
+    } else {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+      setIsPlaying(false);
+      setCurrentTime(0);
+    }
+  }, [isOpen]);
+
+  // Update current time
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const updateTime = () => setCurrentTime(audio.currentTime);
+    const updateDuration = () => setDuration(audio.duration || 30);
+    const onEnded = () => setIsPlaying(false);
+
+    audio.addEventListener('timeupdate', updateTime);
+    audio.addEventListener('loadedmetadata', updateDuration);
+    audio.addEventListener('ended', onEnded);
+
+    return () => {
+      audio.removeEventListener('timeupdate', updateTime);
+      audio.removeEventListener('loadedmetadata', updateDuration);
+      audio.removeEventListener('ended', onEnded);
+    };
+  }, [previewUrl]);
+
+  // Update volume
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = volume;
+    }
+  }, [volume]);
+
+  const togglePlayPause = async () => {
+    if (!audioRef.current || !previewUrl) return;
+
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      try {
+        await audioRef.current.play();
+        setIsPlaying(true);
+      } catch (error) {
+        console.error('Error playing audio:', error);
+      }
+    }
+  };
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const newTime = parseFloat(e.target.value);
+    audio.currentTime = newTime;
+    setCurrentTime(newTime);
+  };
+
+  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setVolume(parseFloat(e.target.value));
+  };
+
+  const formatTime = (time: number) => {
+    const minutes = Math.floor(time / 60);
+    const seconds = Math.floor(time % 60);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  const openInSpotify = () => {
+    if (spotifyUrl) {
+      window.open(spotifyUrl, '_blank');
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-gradient-to-br from-purple-900/90 to-pink-900/90 backdrop-blur-md rounded-2xl p-8 max-w-md w-full mx-4 ring-1 ring-white/20 shadow-2xl animate-scale-in">
+        {/* Close Button */}
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 text-white/60 hover:text-white transition-colors"
+        >
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+
+        {/* Album Art */}
+        <div className="flex justify-center mb-6">
+          <div className="w-48 h-48 rounded-xl overflow-hidden shadow-xl bg-gradient-to-br from-purple-600 to-pink-600 flex items-center justify-center">
+            {albumArt ? (
+              <img 
+                src={albumArt} 
+                alt={`${songName} album art`}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <svg className="w-20 h-20 text-white/50" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+              </svg>
+            )}
+          </div>
+        </div>
+
+        {/* Song Info */}
+        <div className="text-center mb-6">
+          <h3 className="text-white text-xl font-bold mb-1 line-clamp-2">{songName}</h3>
+          <p className="text-white/70 text-lg">{artistName}</p>
+        </div>
+
+        {/* Audio Element */}
+        {previewUrl && (
+          <audio
+            ref={audioRef}
+            src={previewUrl}
+            preload="metadata"
+          />
+        )}
+
+        {/* Controls */}
+        <div className="space-y-4">
+          {/* Progress Bar */}
+          <div className="space-y-2">
+            <input
+              type="range"
+              min="0"
+              max={duration}
+              value={currentTime}
+              onChange={handleSeek}
+              disabled={!previewUrl}
+              className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer slider"
+            />
+            <div className="flex justify-between text-white/60 text-sm">
+              <span>{formatTime(currentTime)}</span>
+              <span>{formatTime(duration)}</span>
+            </div>
+          </div>
+
+          {/* Play Controls */}
+          <div className="flex items-center justify-center space-x-4">
+            <button
+              onClick={togglePlayPause}
+              disabled={!previewUrl}
+              className="bg-white text-purple-900 rounded-full p-4 hover:bg-white/90 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:scale-105"
+            >
+              {isPlaying ? (
+                <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                </svg>
+              ) : (
+                <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z"/>
+                </svg>
+              )}
+            </button>
+          </div>
+
+          {/* Volume Control */}
+          <div className="flex items-center space-x-3">
+            <svg className="w-5 h-5 text-white/60" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+            </svg>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={volume}
+              onChange={handleVolumeChange}
+              className="flex-1 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer slider"
+            />
+          </div>
+
+          {/* Preview Notice & Spotify Link */}
+          <div className="text-center space-y-3">
+            {previewUrl ? (
+              <p className="text-white/60 text-sm">30-second preview</p>
+            ) : (
+              <p className="text-white/60 text-sm">Preview not available</p>
+            )}
+            
+            {spotifyUrl && (
+              <button
+                onClick={openInSpotify}
+                className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded-full font-medium transition-all duration-200 hover:scale-105 shadow-lg flex items-center justify-center space-x-2 mx-auto"
+              >
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.42 1.56-.299.421-1.02.599-1.559.3z"/>
+                </svg>
+                <span>Listen on Spotify</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const fetchDetailsForNewSongs = async (songs: string[]): Promise<SongDetail[]> => {
   try {
@@ -67,6 +306,61 @@ const fetchDetailsForNewSongs = async (songs: string[]): Promise<SongDetail[]> =
     });
   }
 };
+
+// Function to get detailed Spotify data for a song (including preview URL and album art)
+async function getDetailedSpotifyData(songName: string, artistName: string): Promise<{
+  spotifyUrl?: string;
+  previewUrl?: string;
+  albumArt?: string;
+} | null> {
+  try {
+    // Import Spotify credentials
+    const { SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET } = await import('~/utils/envExports');
+    
+    // Get token
+    const tokenResponse = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': `Basic ${Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64')}`
+      },
+      body: 'grant_type=client_credentials'
+    });
+    
+    if (!tokenResponse.ok) return null;
+    
+    const tokenData = await tokenResponse.json();
+    const token = tokenData.access_token;
+    
+    // Search for song
+    const searchQuery = `track:"${songName}" artist:"${artistName}"`;
+    const searchResponse = await fetch(
+      `https://api.spotify.com/v1/search?q=${encodeURIComponent(searchQuery)}&type=track&limit=1`,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      }
+    );
+    
+    if (!searchResponse.ok) return null;
+    
+    const searchData = await searchResponse.json();
+    if (searchData.tracks.items.length > 0) {
+      const track = searchData.tracks.items[0];
+      return {
+        spotifyUrl: track.external_urls.spotify,
+        previewUrl: track.preview_url,
+        albumArt: track.album.images[0]?.url
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error getting detailed Spotify data:', error);
+    return null;
+  }
+}
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const session = await sessionStorage.getSession(request.headers.get('Cookie'));
@@ -144,25 +438,47 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     return redirect('/dashboard');
   }
   
-  // Fetch song details if not already cached
+  // Skip Spotify verification since songs were already verified during generation
+  // Only fetch song details if not already cached (for duration info only)
   if (playlist && !(playlist as any).songDetails) {
-    try {
-      console.log('🎵 Fetching song details for playlist:', playlist.name);
-      const { spotifyDurationService } = await import('~/services/duration-fetching.server');
-      const songDetails = await spotifyDurationService.getSongDetails(playlist.songs);
-      
-      // Update playlist with song details
-      (playlist as any).songDetails = songDetails;
-      
-      // Save the updated playlist to cache the details
-      savePlaylist(playlist);
-      
-      console.log('✅ Song details cached successfully');
-    } catch (error) {
-      console.error('❌ Error fetching song details:', error);
-      // Continue without song details - the component will show fallback durations
+  try {
+    console.log('Fetching song details...');
+    
+    // First try to get from Spotify
+    const { spotifyDurationService } = await import('~/services/duration-fetching.server');
+    const details = await spotifyDurationService.getSongDetails(playlist.songs);
+    
+    // If we got details, use them
+    if (details && details.length > 0) {
+      (playlist as any).songDetails = details;
+    } 
+    // Fallback if Spotify fails
+    else {
+      (playlist as any).songDetails = playlist.songs.map(song => {
+        const match = song.match(/^\d+\.\s*"([^"]+)"\s*by\s*(.+)$/);
+        return {
+          name: match ? match[1] : song,
+          artist: match ? match[2] : 'Unknown',
+          duration: 180000, // Default 3 minutes
+          spotifyId: undefined,
+          spotifyUrl: undefined
+        };
+      });
     }
+    
+    savePlaylist(playlist);
+    console.log('Song details processed');
+    
+  } catch (error) {
+    console.error('Error getting song details:', error);
+    // Emergency fallback
+    (playlist as any).songDetails = playlist.songs.map(song => ({
+      name: song,
+      artist: 'Unknown',
+      duration: 180000 // Default 3 minutes
+    }));
   }
+}
   
   // Check for cover image if not already set
   if (!playlist.coverImageUrl) {
@@ -197,9 +513,37 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SpotifyAc
   
   const formData = await request.formData();
   const actionType = formData.get('actionType')?.toString();
-
-  if (!actionType) {
-    return { error: "No action type provided" };
+  
+  // Handle play song action
+  if (actionType === 'playSong') {
+    const songName = formData.get('songName')?.toString();
+    const artistName = formData.get('artistName')?.toString();
+    
+    if (!songName || !artistName) {
+      return { error: 'Missing song or artist name' };
+    }
+    
+    try {
+      const spotifyData = await getDetailedSpotifyData(songName, artistName);
+      
+      if (spotifyData && spotifyData.spotifyUrl) {
+        return { 
+          success: true, 
+          message: 'Song found on Spotify',
+          playlistUrl: spotifyData.spotifyUrl,
+          tracksAdded: 1,
+          totalSongs: 1,
+          notFoundCount: 0,
+          previewUrl: spotifyData.previewUrl,
+          albumArt: spotifyData.albumArt
+        };
+      } else {
+        return { error: 'Song not found on Spotify' };
+      }
+    } catch (error) {
+      console.error('Error getting song data:', error);
+      return { error: 'Failed to get song data' };
+    }
   }
   
   // Handle fine-tuning actions first
@@ -766,15 +1110,201 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SpotifyAc
         totalSongs: songList.length,
         notFoundCount: notFoundSongs.length
       };
+      
     } catch (error) {
+      console.error("Error creating Spotify playlist:", error);
       return { 
         error: error instanceof Error ? error.message : "An unexpected error occurred while creating the playlist"
       };
     }
   }
+  
+  return { error: 'Invalid action' };
+};
 
-  return { error: "Invalid action type" };
-}
+// Enhanced SongsList component with play functionality
+const EnhancedSongsList = ({ 
+  songs, 
+  selectedSongs, 
+  showFineTuneOptions, 
+  isLoading, 
+  onToggleSongSelection, 
+  onClearSelection,
+  songDetails 
+}: {
+  songs: string[];
+  selectedSongs: Set<number>;
+  showFineTuneOptions: boolean;
+  isLoading: boolean;
+  onToggleSongSelection: (index: number) => void;
+  onClearSelection: () => void;
+  songDetails?: SongDetail[];
+}) => {
+  const playFetcher = useFetcher<SpotifyActionResponse>();
+  const [playingIndex, setPlayingIndex] = useState<number | null>(null);
+  const [showPlayer, setShowPlayer] = useState(false);
+  const [currentSong, setCurrentSong] = useState<{
+    name: string;
+    artist: string;
+    previewUrl?: string;
+    spotifyUrl?: string;
+    albumArt?: string;
+  } | null>(null);
+  
+  const handlePlaySong = (index: number, songName: string, artistName: string) => {
+    setPlayingIndex(index);
+    
+    const formData = new FormData();
+    formData.append('actionType', 'playSong');
+    formData.append('songName', songName);
+    formData.append('artistName', artistName);
+    
+    playFetcher.submit(formData, { method: 'post' });
+  };
+  
+  useEffect(() => {
+    if (playFetcher.state === 'idle' && playFetcher.data) {
+      if (playFetcher.data.success && 'playlistUrl' in playFetcher.data) {
+        // Get song info for the modal
+        const songIndex = playingIndex;
+        if (songIndex !== null) {
+          const song = songs[songIndex];
+          const match = song.match(/^\d+\.\s*"([^"]+)"\s*by\s*(.+)$/);
+          const songName = match ? match[1] : song;
+          const artistName = match ? match[2] : 'Unknown Artist';
+          
+          setCurrentSong({
+            name: songName,
+            artist: artistName,
+            spotifyUrl: playFetcher.data.playlistUrl,
+            previewUrl: playFetcher.data.previewUrl,
+            albumArt: playFetcher.data.albumArt
+          });
+          setShowPlayer(true);
+        }
+      } else if (playFetcher.data.error) {
+        alert(`Error: ${playFetcher.data.error}`);
+      }
+      setPlayingIndex(null);
+    }
+  }, [playFetcher.state, playFetcher.data, playingIndex, songs]);
+  
+  const closePlayer = () => {
+    setShowPlayer(false);
+    setCurrentSong(null);
+  };
+  
+  return (
+    <>
+      <div className='flex-1 bg-white/10 backdrop-blur-md rounded-xl p-6 ring-1 ring-white/30 shadow-xl hover:shadow-2xl transition-all duration-300'>
+        <div className='flex items-center justify-between mb-4'>
+          <h3 className='text-white font-bold text-xl'>Songs ({songs.length})</h3>
+          {showFineTuneOptions && selectedSongs.size > 0 && (
+            <button
+              onClick={onClearSelection}
+              className='text-white/80 hover:text-white text-sm underline'
+            >
+              Clear selection ({selectedSongs.size})
+            </button>
+          )}
+        </div>
+        
+        <div className='max-h-[600px] overflow-y-auto space-y-3 pr-4
+          [&::-webkit-scrollbar]:w-1.5
+          [&::-webkit-scrollbar]:hover:w-2
+          [&::-webkit-scrollbar-track]:rounded-xl
+          [&::-webkit-scrollbar-track]:bg-white/10
+          [&::-webkit-scrollbar-thumb]:rounded-lg
+          [&::-webkit-scrollbar-thumb]:bg-orange-200/30
+          [&::-webkit-scrollbar-thumb]:hover:bg-orange-200/40'>
+          
+          {songs.map((song, index) => {
+            const match = song.match(/^\d+\.\s*"([^"]+)"\s*by\s*(.+)$/);
+            const songName = match ? match[1] : song;
+            const artistName = match ? match[2] : 'Unknown Artist';
+            const songDetail = songDetails?.[index];
+            const isSelected = selectedSongs.has(index);
+            const isPlaying = playingIndex === index;
+            
+            return (
+              <div
+                key={index}
+                className={`song-item p-4 rounded-lg flex items-center justify-between group transition-all duration-200 ${
+                  isSelected ? 'bg-white/20 ring-1 ring-white/40' : ''
+                } ${isLoading ? 'opacity-50' : ''}`}
+              >
+                <div className='flex items-center space-x-4 flex-1'>
+                  <div className='text-white/60 font-medium w-8 text-center text-sm'>
+                    {index + 1}
+                  </div>
+                  
+                  {showFineTuneOptions && (
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => onToggleSongSelection(index)}
+                      disabled={isLoading}
+                      className="w-4 h-4 text-pink-600 bg-white/20 border-white/30 rounded focus:ring-pink-500 focus:ring-2"
+                    />
+                  )}
+                  
+                  <div className='flex-1 min-w-0'>
+                    <div className='text-white font-medium text-base mb-1 truncate'>
+                      {songName}
+                    </div>
+                    <div className='text-white/70 text-sm truncate'>
+                      {artistName}
+                    </div>
+                  </div>
+                  
+                  <div className='text-white/60 text-sm tabular-nums font-medium'>
+                    {songDetail?.duration ? 
+                      `${Math.floor(songDetail.duration / 60000)}:${String(Math.floor((songDetail.duration % 60000) / 1000)).padStart(2, '0')}` : 
+                      '--:--'
+                    }
+                  </div>
+                </div>
+                
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handlePlaySong(index, songName, artistName);
+                  }}
+                  disabled={isPlaying || playFetcher.state === 'submitting'}
+                  className='ml-4 p-3 text-white/60 hover:text-white rounded-full hover:bg-white/20 transition-all duration-200 group-hover:opacity-100 opacity-0 disabled:opacity-50 hover:scale-110'
+                  title="Play song"
+                  type="button"
+                >
+                  {isPlaying ? (
+                    <div className="w-5 h-5 rounded-full border-2 border-current border-t-transparent animate-spin"></div>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M8 5v14l11-7z"/>
+                    </svg>
+                  )}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Music Player Modal */}
+      {currentSong && (
+        <MusicPlayerModal
+          isOpen={showPlayer}
+          onClose={closePlayer}
+          songName={currentSong.name}
+          artistName={currentSong.artist}
+          albumArt={currentSong.albumArt}
+          previewUrl={currentSong.previewUrl}
+          spotifyUrl={currentSong.spotifyUrl}
+        />
+      )}
+    </>
+  );
+};
 
 export default function PlaylistPage() {
   const { playlist: initialPlaylist, user, colorPalette: initialColorPalette } = useLoaderData<PlaylistData>();
@@ -972,7 +1502,7 @@ export default function PlaylistPage() {
             successMessage={successMessage}
           />
           
-          <SongsList
+          <EnhancedSongsList
             songs={playlist.songs}
             selectedSongs={selectedSongs}
             showFineTuneOptions={showFineTuneOptions}
@@ -1003,6 +1533,52 @@ export default function PlaylistPage() {
         @keyframes fadeIn {
           from { opacity: 0; transform: translateY(10px); }
           to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes scale-in {
+          from {
+            opacity: 0;
+            transform: scale(0.9);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1);
+          }
+        }
+
+        .animate-scale-in {
+          animation: scale-in 0.3s ease-out;
+        }
+
+        .slider::-webkit-slider-thumb {
+          appearance: none;
+          width: 16px;
+          height: 16px;
+          background: white;
+          border-radius: 50%;
+          cursor: pointer;
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .slider::-webkit-slider-thumb:hover {
+          transform: scale(1.1);
+        }
+
+        .slider::-moz-range-thumb {
+          width: 16px;
+          height: 16px;
+          background: white;
+          border-radius: 50%;
+          cursor: pointer;
+          border: none;
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .line-clamp-2 {
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
         }
       `}</style>
     </BackgroundGradient>
