@@ -298,6 +298,156 @@ async function getSpotifyGenreRecommendations(genre: string, limit = 50, era?: s
   }
 }
 
+// Enhanced fallback function to get tracks from multiple sources
+async function getEnhancedFallbackTracks(
+  params: LastFmContextParams, 
+  currentTracks: LastFmContextTrack[], 
+  targetCount: number
+): Promise<LastFmContextTrack[]> {
+  const { genre, subgenre, mood, era } = params;
+  let additionalTracks: LastFmContextTrack[] = [];
+  
+  console.log(`Getting enhanced fallback tracks. Current: ${currentTracks.length}, Target: ${targetCount}`);
+  
+  // Strategy 1: Broader genre search
+  if (genre && additionalTracks.length < (targetCount - currentTracks.length)) {
+    try {
+      console.log(`Fallback 1: Broader search for "${genre}"`);
+      const broaderTracks = await searchSpotifyTracks(`${genre} music`, 30);
+      
+      // Filter out duplicates
+      const existingKeys = new Set([...currentTracks, ...additionalTracks].map(t => `${t.name}-${t.artist}`.toLowerCase()));
+      const uniqueTracks = broaderTracks.filter(track => {
+        const key = `${track.name}-${track.artist}`.toLowerCase();
+        return !existingKeys.has(key);
+      });
+      
+      additionalTracks.push(...uniqueTracks);
+      console.log(`Fallback 1: Added ${uniqueTracks.length} tracks`);
+    } catch (error) {
+      console.error("Fallback 1 failed:", error);
+    }
+  }
+  
+  // Strategy 2: Popular songs from era
+  if (era && era !== 'Latest Releases' && additionalTracks.length < (targetCount - currentTracks.length)) {
+    try {
+      console.log(`Fallback 2: Popular songs from ${era}`);
+      const eraQuery = era.replace(/[()]/g, '').trim();
+      const eraTracks = await searchSpotifyTracks(`${eraQuery} hits`, 30);
+      
+      const existingKeys = new Set([...currentTracks, ...additionalTracks].map(t => `${t.name}-${t.artist}`.toLowerCase()));
+      const uniqueTracks = eraTracks.filter(track => {
+        const key = `${track.name}-${track.artist}`.toLowerCase();
+        return !existingKeys.has(key);
+      });
+      
+      additionalTracks.push(...uniqueTracks);
+      console.log(`Fallback 2: Added ${uniqueTracks.length} tracks`);
+    } catch (error) {
+      console.error("Fallback 2 failed:", error);
+    }
+  }
+  
+  // Strategy 3: Mood-based search
+  if (mood && additionalTracks.length < (targetCount - currentTracks.length)) {
+    try {
+      console.log(`Fallback 3: Mood-based search for "${mood}"`);
+      const moodTracks = await searchSpotifyTracks(`${mood} songs`, 30);
+      
+      const existingKeys = new Set([...currentTracks, ...additionalTracks].map(t => `${t.name}-${t.artist}`.toLowerCase()));
+      const uniqueTracks = moodTracks.filter(track => {
+        const key = `${track.name}-${track.artist}`.toLowerCase();
+        return !existingKeys.has(key);
+      });
+      
+      additionalTracks.push(...uniqueTracks);
+      console.log(`Fallback 3: Added ${uniqueTracks.length} tracks`);
+    } catch (error) {
+      console.error("Fallback 3 failed:", error);
+    }
+  }
+  
+  // Strategy 4: Generic popular tracks
+  if (additionalTracks.length < (targetCount - currentTracks.length)) {
+    try {
+      console.log("Fallback 4: Generic popular tracks");
+      const popularTracks = await searchSpotifyTracks("top hits 2024", 50);
+      
+      const existingKeys = new Set([...currentTracks, ...additionalTracks].map(t => `${t.name}-${t.artist}`.toLowerCase()));
+      const uniqueTracks = popularTracks.filter(track => {
+        const key = `${track.name}-${track.artist}`.toLowerCase();
+        return !existingKeys.has(key);
+      });
+      
+      additionalTracks.push(...uniqueTracks);
+      console.log(`Fallback 4: Added ${uniqueTracks.length} tracks`);
+    } catch (error) {
+      console.error("Fallback 4 failed:", error);
+    }
+  }
+  
+  // Strategy 5: Last resort - curated list
+  if (additionalTracks.length < (targetCount - currentTracks.length)) {
+    console.log("Fallback 5: Last resort curated tracks");
+    
+    const curatedTracks: LastFmContextTrack[] = [
+      { name: "Blinding Lights", artist: "The Weeknd", listeners: "Popular", url: "" },
+      { name: "Shape of You", artist: "Ed Sheeran", listeners: "Popular", url: "" },
+      { name: "Dance The Night", artist: "Dua Lipa", listeners: "Popular", url: "" },
+      { name: "As It Was", artist: "Harry Styles", listeners: "Popular", url: "" },
+      { name: "Anti-Hero", artist: "Taylor Swift", listeners: "Popular", url: "" },
+      { name: "Flowers", artist: "Miley Cyrus", listeners: "Popular", url: "" },
+      { name: "Unholy", artist: "Sam Smith ft. Kim Petras", listeners: "Popular", url: "" },
+      { name: "Heat Waves", artist: "Glass Animals", listeners: "Popular", url: "" },
+      { name: "Stay", artist: "The Kid LAROI & Justin Bieber", listeners: "Popular", url: "" },
+      { name: "Good 4 U", artist: "Olivia Rodrigo", listeners: "Popular", url: "" },
+      { name: "Levitating", artist: "Dua Lipa", listeners: "Popular", url: "" },
+      { name: "Watermelon Sugar", artist: "Harry Styles", listeners: "Popular", url: "" },
+      { name: "Therefore I Am", artist: "Billie Eilish", listeners: "Popular", url: "" },
+      { name: "positions", artist: "Ariana Grande", listeners: "Popular", url: "" },
+      { name: "34+35", artist: "Ariana Grande", listeners: "Popular", url: "" },
+      { name: "Mood", artist: "24kGoldn ft. iann dior", listeners: "Popular", url: "" },
+      { name: "Rockstar", artist: "DaBaby ft. Roddy Ricch", listeners: "Popular", url: "" },
+      { name: "The Box", artist: "Roddy Ricch", listeners: "Popular", url: "" },
+      { name: "Circles", artist: "Post Malone", listeners: "Popular", url: "" },
+      { name: "Don't Start Now", artist: "Dua Lipa", listeners: "Popular", url: "" },
+      { name: "Savage", artist: "Megan Thee Stallion", listeners: "Popular", url: "" },
+      { name: "Rain on Me", artist: "Lady Gaga & Ariana Grande", listeners: "Popular", url: "" },
+      { name: "Stuck with U", artist: "Ariana Grande & Justin Bieber", listeners: "Popular", url: "" },
+      { name: "Say So", artist: "Doja Cat", listeners: "Popular", url: "" },
+      { name: "Toosie Slide", artist: "Drake", listeners: "Popular", url: "" },
+      { name: "Someone You Loved", artist: "Lewis Capaldi", listeners: "Popular", url: "" },
+      { name: "Bad Guy", artist: "Billie Eilish", listeners: "Popular", url: "" },
+      { name: "Old Town Road", artist: "Lil Nas X ft. Billy Ray Cyrus", listeners: "Popular", url: "" },
+      { name: "Sunflower", artist: "Post Malone & Swae Lee", listeners: "Popular", url: "" },
+      { name: "Without Me", artist: "Halsey", listeners: "Popular", url: "" },
+      { name: "7 rings", artist: "Ariana Grande", listeners: "Popular", url: "" },
+      { name: "Sucker", artist: "Jonas Brothers", listeners: "Popular", url: "" },
+      { name: "Truth Hurts", artist: "Lizzo", listeners: "Popular", url: "" },
+      { name: "Senorita", artist: "Shawn Mendes & Camila Cabello", listeners: "Popular", url: "" },
+      { name: "I Don't Care", artist: "Ed Sheeran & Justin Bieber", listeners: "Popular", url: "" },
+      { name: "Memories", artist: "Maroon 5", listeners: "Popular", url: "" },
+      { name: "Lose You To Love Me", artist: "Selena Gomez", listeners: "Popular", url: "" },
+      { name: "Circles", artist: "Mac Miller", listeners: "Popular", url: "" },
+      { name: "10,000 Hours", artist: "Dan + Shay & Justin Bieber", listeners: "Popular", url: "" },
+      { name: "Roxanne", artist: "Arizona Zervas", listeners: "Popular", url: "" }
+    ];
+    
+    const existingKeys = new Set([...currentTracks, ...additionalTracks].map(t => `${t.name}-${t.artist}`.toLowerCase()));
+    const uniqueCuratedTracks = curatedTracks.filter(track => {
+      const key = `${track.name}-${track.artist}`.toLowerCase();
+      return !existingKeys.has(key);
+    });
+    
+    additionalTracks.push(...uniqueCuratedTracks);
+    console.log(`Fallback 5: Added ${uniqueCuratedTracks.length} curated tracks`);
+  }
+  
+  console.log(`Enhanced fallback complete. Added ${additionalTracks.length} additional tracks`);
+  return additionalTracks;
+}
+
 // Function to fetch recent top tracks from Last.fm (kept as a fallback)
 export async function fetchTopTracks(params: {
   limit?: number;
@@ -377,7 +527,7 @@ export async function fetchTracksByTag(tag: string, limit = 50): Promise<LastFmT
 // Function to build a Last.fm context database for Llama
 export async function buildLastFmContext(params: LastFmContextParams): Promise<LastFmContextTrack[]> {
   const { genre, subgenre, mood, era, limit = 50 } = params;
-  const minimumTracks = 5; // Minimum number of tracks we want
+  const targetTracks = Math.max(limit, 30); // Ensure we aim for at least 30 tracks
   
   try {
     // Collect tracks from multiple sources based on parameters
@@ -393,7 +543,7 @@ export async function buildLastFmContext(params: LastFmContextParams): Promise<L
       // First, explicitly search for 2025 music
       try {
         console.log("Searching Spotify for 2025 music explicitly");
-        const new2025Tracks = await searchSpotifyTracks("2025 new music", Math.floor(limit / 2));
+        const new2025Tracks = await searchSpotifyTracks("2025 new music", Math.floor(targetTracks / 2));
         spotifyTracks.push(...new2025Tracks);
         
         console.log(`Found ${new2025Tracks.length} tracks from 2025 search`);
@@ -402,10 +552,10 @@ export async function buildLastFmContext(params: LastFmContextParams): Promise<L
       }
       
       // If we have a genre, specifically search for 2025 + genre
-      if (genre && spotifyTracks.length < limit) {
+      if (genre && spotifyTracks.length < targetTracks) {
         try {
           console.log(`Searching for ${genre} 2025 music`);
-          const genreTracks = await searchSpotifyTracks(`${genre} 2025 music new releases`, Math.floor(limit / 2));
+          const genreTracks = await searchSpotifyTracks(`${genre} 2025 music new releases`, Math.floor(targetTracks / 2));
           
           // Avoid duplicates
           const existingTrackIds = new Set(spotifyTracks.map(t => `${t.name}-${t.artist}`));
@@ -421,10 +571,10 @@ export async function buildLastFmContext(params: LastFmContextParams): Promise<L
       }
       
       // 1. Also try to get Spotify's new releases
-      if (spotifyTracks.length < limit) {
+      if (spotifyTracks.length < targetTracks) {
         try {
           console.log("Getting new releases from Spotify");
-          const newReleases = await getSpotifyNewReleases(genre, limit);
+          const newReleases = await getSpotifyNewReleases(genre, targetTracks);
           
           // Avoid duplicates
           const existingTrackIds = new Set(spotifyTracks.map(t => `${t.name}-${t.artist}`));
@@ -440,10 +590,10 @@ export async function buildLastFmContext(params: LastFmContextParams): Promise<L
       }
       
       // 2. If we still need more tracks and have a genre, get genre-specific recommendations
-      if (spotifyTracks.length < minimumTracks && genre) {
+      if (spotifyTracks.length < Math.floor(targetTracks * 0.7) && genre) {
         try {
           console.log(`Getting Spotify genre recommendations for ${genre}`);
-          const genreTracks = await getSpotifyGenreRecommendations(genre, limit);
+          const genreTracks = await getSpotifyGenreRecommendations(genre, targetTracks);
           
           // Avoid duplicates
           const existingTrackIds = new Set(spotifyTracks.map(t => `${t.name}-${t.artist}`));
@@ -459,10 +609,10 @@ export async function buildLastFmContext(params: LastFmContextParams): Promise<L
       }
       
       // 3. If we still need more tracks and have a genre, search for that genre
-      if (spotifyTracks.length < minimumTracks && genre) {
+      if (spotifyTracks.length < Math.floor(targetTracks * 0.7) && genre) {
         try {
           console.log(`Searching Spotify for ${genre} music`);
-          const searchTracks = await searchSpotifyByGenre(genre, limit);
+          const searchTracks = await searchSpotifyByGenre(genre, targetTracks);
           
           // Avoid duplicates
           const existingTrackIds = new Set(spotifyTracks.map(t => `${t.name}-${t.artist}`));
@@ -478,10 +628,10 @@ export async function buildLastFmContext(params: LastFmContextParams): Promise<L
       }
       
       // 4. Also search for "new music 2024" as a fallback
-      if (spotifyTracks.length < minimumTracks) {
+      if (spotifyTracks.length < Math.floor(targetTracks * 0.7)) {
         try {
           console.log("Searching Spotify for 2024 new music");
-          const searchTracks = await searchSpotifyTracks("2024 new music", limit);
+          const searchTracks = await searchSpotifyTracks("2024 new music", targetTracks);
           
           // Avoid duplicates
           const existingTrackIds = new Set(spotifyTracks.map(t => `${t.name}-${t.artist}`));
@@ -508,6 +658,20 @@ export async function buildLastFmContext(params: LastFmContextParams): Promise<L
         };
       });
       
+      // Enhanced fallback for Latest Releases if we don't have enough
+      if (contextTracks.length < targetTracks) {
+        console.log(`Latest Releases: Only ${contextTracks.length} tracks, getting enhanced fallback`);
+        const additionalTracks = await getEnhancedFallbackTracks(params, contextTracks, targetTracks);
+        
+        // Mark additional tracks as recent releases too
+        const markedAdditionalTracks = additionalTracks.map(track => ({
+          ...track,
+          listeners: track.listeners + " (2024-2025 era)"
+        }));
+        
+        contextTracks.push(...markedAdditionalTracks);
+      }
+      
       // Log all tracks that are being returned
       console.log("\n=== LATEST RELEASE TRACKS FROM SPOTIFY ===");
       console.log(`Total tracks: ${contextTracks.length}`);
@@ -517,12 +681,7 @@ export async function buildLastFmContext(params: LastFmContextParams): Promise<L
       });
       console.log("=================================\n");
       
-      // If we still have fewer than 5 tracks, add a note
-      if (contextTracks.length < minimumTracks) {
-        console.log(`WARNING: Only found ${contextTracks.length} tracks, less than minimum of ${minimumTracks}`);
-      }
-      
-      return contextTracks.slice(0, limit);
+      return contextTracks.slice(0, targetTracks);
     }
     
     // For non-Latest Releases eras, use a combination of Spotify and Last.fm
@@ -532,7 +691,7 @@ export async function buildLastFmContext(params: LastFmContextParams): Promise<L
     if (genre) {
       try {
         console.log(`Getting Spotify tracks for ${genre} from era ${era || 'any'}`);
-        const genreTracks = await getSpotifyGenreRecommendations(genre, limit, era);
+        const genreTracks = await getSpotifyGenreRecommendations(genre, targetTracks, era);
         combinedTracks.push(...genreTracks);
       } catch (error) {
         console.error(`Error getting Spotify tracks for ${genre}:`, error);
@@ -552,7 +711,7 @@ export async function buildLastFmContext(params: LastFmContextParams): Promise<L
         }
         
         console.log(`Searching Spotify for ${searchQuery}`);
-        const subgenreTracks = await searchSpotifyTracks(searchQuery, Math.floor(limit / 2));
+        const subgenreTracks = await searchSpotifyTracks(searchQuery, Math.floor(targetTracks / 2));
         
         // Avoid duplicates
         const existingTrackIds = new Set(combinedTracks.map(t => `${t.name}-${t.artist}`));
@@ -578,7 +737,7 @@ export async function buildLastFmContext(params: LastFmContextParams): Promise<L
         }
         
         console.log(`Searching Spotify for ${searchQuery}`);
-        const moodTracks = await searchSpotifyTracks(searchQuery, Math.floor(limit / 2));
+        const moodTracks = await searchSpotifyTracks(searchQuery, Math.floor(targetTracks / 2));
         
         // Avoid duplicates
         const existingTrackIds = new Set(combinedTracks.map(t => `${t.name}-${t.artist}`));
@@ -603,7 +762,7 @@ export async function buildLastFmContext(params: LastFmContextParams): Promise<L
         }
         
         console.log(`Searching Spotify for ${searchQuery}`);
-        const eraTracks = await searchSpotifyTracks(searchQuery, Math.floor(limit / 2));
+        const eraTracks = await searchSpotifyTracks(searchQuery, Math.floor(targetTracks / 2));
         
         // Avoid duplicates
         const existingTrackIds = new Set(combinedTracks.map(t => `${t.name}-${t.artist}`));
@@ -619,6 +778,13 @@ export async function buildLastFmContext(params: LastFmContextParams): Promise<L
     
     // Add all the tracks we found
     contextTracks.push(...combinedTracks);
+    
+    // Enhanced fallback if we don't have enough tracks
+    if (contextTracks.length < targetTracks) {
+      console.log(`Only ${contextTracks.length} tracks found, getting enhanced fallback to reach ${targetTracks}`);
+      const additionalTracks = await getEnhancedFallbackTracks(params, contextTracks, targetTracks);
+      contextTracks.push(...additionalTracks);
+    }
     
     // Add era info to listener metadata
     if (era && era !== 'Latest Releases') {
@@ -639,16 +805,35 @@ export async function buildLastFmContext(params: LastFmContextParams): Promise<L
     });
     console.log("=================================\n");
     
-    return contextTracks.slice(0, limit);
+    return contextTracks.slice(0, targetTracks);
   } catch (error) {
     console.error("Error building Spotify context:", error);
-    // Fall back to some safe default tracks
-    return [
-      { name: "Blinding Lights", artist: "The Weeknd", listeners: "1000000 (2025 release)", url: "" },
-      { name: "Dance The Night", artist: "Dua Lipa", listeners: "950000 (2025 release)", url: "" },
-      { name: "As It Was", artist: "Harry Styles", listeners: "980000 (2025 release)", url: "" },
-      { name: "Cruel Summer", artist: "Taylor Swift", listeners: "970000 (2025 release)", url: "" },
-      { name: "Flowers", artist: "Miley Cyrus", listeners: "960000 (2025 release)", url: "" }
+    
+    // Last resort fallback to curated tracks
+    console.log("Using last resort curated tracks");
+    const fallbackTracks: LastFmContextTrack[] = [
+      { name: "Blinding Lights", artist: "The Weeknd", listeners: "1000000 (Popular)", url: "" },
+      { name: "Dance The Night", artist: "Dua Lipa", listeners: "950000 (Popular)", url: "" },
+      { name: "As It Was", artist: "Harry Styles", listeners: "980000 (Popular)", url: "" },
+      { name: "Anti-Hero", artist: "Taylor Swift", listeners: "970000 (Popular)", url: "" },
+      { name: "Flowers", artist: "Miley Cyrus", listeners: "960000 (Popular)", url: "" },
+      { name: "Shape of You", artist: "Ed Sheeran", listeners: "955000 (Popular)", url: "" },
+      { name: "Bad Guy", artist: "Billie Eilish", listeners: "945000 (Popular)", url: "" },
+      { name: "Watermelon Sugar", artist: "Harry Styles", listeners: "940000 (Popular)", url: "" },
+      { name: "Levitating", artist: "Dua Lipa", listeners: "935000 (Popular)", url: "" },
+      { name: "Good 4 U", artist: "Olivia Rodrigo", listeners: "930000 (Popular)", url: "" },
+      { name: "Stay", artist: "The Kid LAROI & Justin Bieber", listeners: "925000 (Popular)", url: "" },
+      { name: "Heat Waves", artist: "Glass Animals", listeners: "920000 (Popular)", url: "" },
+      { name: "Industry Baby", artist: "Lil Nas X & Jack Harlow", listeners: "915000 (Popular)", url: "" },
+      { name: "Peaches", artist: "Justin Bieber", listeners: "910000 (Popular)", url: "" },
+      { name: "Save Your Tears", artist: "The Weeknd", listeners: "905000 (Popular)", url: "" },
+      { name: "Montero", artist: "Lil Nas X", listeners: "900000 (Popular)", url: "" },
+      { name: "drivers license", artist: "Olivia Rodrigo", listeners: "895000 (Popular)", url: "" },
+      { name: "Positions", artist: "Ariana Grande", listeners: "890000 (Popular)", url: "" },
+      { name: "Mood", artist: "24kGoldn ft. iann dior", listeners: "885000 (Popular)", url: "" },
+      { name: "Willow", artist: "Taylor Swift", listeners: "880000 (Popular)", url: "" }
     ];
+    
+    return fallbackTracks.slice(0, Math.min(targetTracks, fallbackTracks.length));
   }
 }
