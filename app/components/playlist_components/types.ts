@@ -1,3 +1,11 @@
+export interface SongDetail {
+  name: string;
+  artist: string;
+  duration?: number;
+  spotifyId?: string;
+  spotifyUrl?: string;
+}
+
 export interface PlaylistRecommendation {
   id: string;
   name: string;
@@ -6,6 +14,7 @@ export interface PlaylistRecommendation {
   createdAt: string;
   userId: string;
   coverImageUrl?: string;
+  songDetails?: SongDetail[];
   filters: {
     genre?: string;
     subgenre?: string;

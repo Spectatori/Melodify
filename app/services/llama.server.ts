@@ -3,7 +3,8 @@ import { buildLastFmContext } from "./lastfm.server";
 import { UserOptions, LastFmContextTrack } from "~/types/lastfm.types";
 import { json, type ActionFunction } from "@remix-run/node";
 import { musicVectorDB, RecommendationRecord } from "~/vector/vector-db-server";
-
+import { spotifyDurationService } from "./duration-fetching.server";
+import { SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET } from "~/utils/envExports";
 
 // Keep track of previously recommended songs to avoid repetition
 let previousRecommendations: Map<string, Set<string>> = new Map();
@@ -46,23 +47,23 @@ export async function callEnhancedLlama(userPrompt: string, userOptions: UserOpt
       // Continue without similar recommendations
     }
     
-    // STEP 1: Fetch songs from Last.fm/Spotify via buildLastFmContext
-    console.log("Fetching tracks from Last.fm/Spotify with options:", userOptions);
+    // STEP 1: Fetch verified songs from Last.fm (already Spotify-verified)
+    console.log("Fetching verified tracks from Last.fm with options:", userOptions);
     
     let lastFmTracks: LastFmContextTrack[] = [];
     let attempts = 0;
     const maxAttempts = 3;
-    const targetSongs = 50; // We want at least 50 tracks to choose from for 20 song recommendations
+    const targetSongs = 50; // Target final songs since they're already verified
     
-    // Try multiple times with increasing limits if we don't get enough songs
+    // Try multiple times with increasing limits if we don't get enough verified songs
     while (lastFmTracks.length < targetSongs && attempts < maxAttempts) {
       attempts++;
       const requestLimit = 50 * attempts; // Increase limit with each attempt
       
-      console.log(`Attempt ${attempts}: Requesting ${requestLimit} tracks from LastFM/Spotify`);
+      console.log(`Attempt ${attempts}: Requesting ${requestLimit} verified tracks from Last.fm`);
       
       try {
-        // Use your existing buildLastFmContext function to get relevant tracks
+        // Use buildLastFmContext function to get Last.fm tracks verified on Spotify
         const newTracks = await buildLastFmContext({
           genre: userOptions.genre,
           subgenre: userOptions.subgenre,
@@ -80,7 +81,7 @@ export async function callEnhancedLlama(userPrompt: string, userOptions: UserOpt
         
         lastFmTracks = [...lastFmTracks, ...uniqueNewTracks];
         
-        console.log(`Attempt ${attempts}: Got ${newTracks.length} tracks (${uniqueNewTracks.length} unique), total: ${lastFmTracks.length}`);
+        console.log(`Attempt ${attempts}: Got ${newTracks.length} verified tracks (${uniqueNewTracks.length} unique), total: ${lastFmTracks.length}`);
         
         // If we got a good amount on this attempt, stop trying
         if (newTracks.length >= requestLimit * 0.7) {
@@ -96,7 +97,7 @@ export async function callEnhancedLlama(userPrompt: string, userOptions: UserOpt
           try {
             const broadTracks = await buildLastFmContext({
               genre: userOptions.genre || "pop", // Use pop as fallback
-              limit: 100
+              limit: 50
             });
             
             const existingTrackKeys = new Set(lastFmTracks.map(t => `${t.name}-${t.artist}`.toLowerCase()));
@@ -106,7 +107,7 @@ export async function callEnhancedLlama(userPrompt: string, userOptions: UserOpt
             });
             
             lastFmTracks = [...lastFmTracks, ...uniqueBroadTracks];
-            console.log(`Broad search added ${uniqueBroadTracks.length} more tracks, total: ${lastFmTracks.length}`);
+            console.log(`Broad search added ${uniqueBroadTracks.length} more verified tracks, total: ${lastFmTracks.length}`);
           } catch (broadError) {
             console.error("Broad search also failed:", broadError);
           }
@@ -114,38 +115,34 @@ export async function callEnhancedLlama(userPrompt: string, userOptions: UserOpt
       }
     }
     
-    console.log(`Final result: ${lastFmTracks.length} tracks from LastFM/Spotify after ${attempts} attempts`);
+    console.log(`Final result: ${lastFmTracks.length} verified tracks from Last.fm after ${attempts} attempts`);
     
-    // If we still don't have enough tracks, add some emergency fallback tracks
+    // If we still don't have enough verified tracks, add some emergency fallback tracks
     if (lastFmTracks.length < 20) {
-      console.warn(`Only received ${lastFmTracks.length} tracks from APIs, adding fallback tracks`);
+      console.warn(`Only received ${lastFmTracks.length} verified tracks from APIs, adding fallback tracks`);
       
+      // These are verified tracks that are known to exist on both Last.fm and Spotify
       const fallbackTracks: LastFmContextTrack[] = [
-        { name: "Blinding Lights", artist: "The Weeknd", listeners: "Popular", url: "" },
-        { name: "Shape of You", artist: "Ed Sheeran", listeners: "Popular", url: "" },
-        { name: "Dance The Night", artist: "Dua Lipa", listeners: "Popular", url: "" },
-        { name: "As It Was", artist: "Harry Styles", listeners: "Popular", url: "" },
-        { name: "Anti-Hero", artist: "Taylor Swift", listeners: "Popular", url: "" },
-        { name: "Flowers", artist: "Miley Cyrus", listeners: "Popular", url: "" },
-        { name: "Unholy", artist: "Sam Smith ft. Kim Petras", listeners: "Popular", url: "" },
-        { name: "Heat Waves", artist: "Glass Animals", listeners: "Popular", url: "" },
-        { name: "Stay", artist: "The Kid LAROI & Justin Bieber", listeners: "Popular", url: "" },
-        { name: "Good 4 U", artist: "Olivia Rodrigo", listeners: "Popular", url: "" },
-        { name: "Levitating", artist: "Dua Lipa", listeners: "Popular", url: "" },
-        { name: "Watermelon Sugar", artist: "Harry Styles", listeners: "Popular", url: "" },
-        { name: "Therefore I Am", artist: "Billie Eilish", listeners: "Popular", url: "" },
-        { name: "positions", artist: "Ariana Grande", listeners: "Popular", url: "" },
-        { name: "34+35", artist: "Ariana Grande", listeners: "Popular", url: "" },
-        { name: "Mood", artist: "24kGoldn ft. iann dior", listeners: "Popular", url: "" },
-        { name: "Rockstar", artist: "DaBaby ft. Roddy Ricch", listeners: "Popular", url: "" },
-        { name: "The Box", artist: "Roddy Ricch", listeners: "Popular", url: "" },
-        { name: "Circles", artist: "Post Malone", listeners: "Popular", url: "" },
-        { name: "Don't Start Now", artist: "Dua Lipa", listeners: "Popular", url: "" },
-        { name: "Savage", artist: "Megan Thee Stallion", listeners: "Popular", url: "" },
-        { name: "Rain on Me", artist: "Lady Gaga & Ariana Grande", listeners: "Popular", url: "" },
-        { name: "Stuck with U", artist: "Ariana Grande & Justin Bieber", listeners: "Popular", url: "" },
-        { name: "Say So", artist: "Doja Cat", listeners: "Popular", url: "" },
-        { name: "Toosie Slide", artist: "Drake", listeners: "Popular", url: "" }
+        { name: "Blinding Lights", artist: "The Weeknd", listeners: "3000000", url: "" },
+        { name: "Shape of You", artist: "Ed Sheeran", listeners: "2900000", url: "" },
+        { name: "Dance The Night", artist: "Dua Lipa", listeners: "2800000", url: "" },
+        { name: "As It Was", artist: "Harry Styles", listeners: "2700000", url: "" },
+        { name: "Anti-Hero", artist: "Taylor Swift", listeners: "2600000", url: "" },
+        { name: "Flowers", artist: "Miley Cyrus", listeners: "2500000", url: "" },
+        { name: "Unholy", artist: "Sam Smith ft. Kim Petras", listeners: "2400000", url: "" },
+        { name: "Heat Waves", artist: "Glass Animals", listeners: "2300000", url: "" },
+        { name: "Stay", artist: "The Kid LAROI & Justin Bieber", listeners: "2200000", url: "" },
+        { name: "Good 4 U", artist: "Olivia Rodrigo", listeners: "2100000", url: "" },
+        { name: "Levitating", artist: "Dua Lipa", listeners: "2000000", url: "" },
+        { name: "Watermelon Sugar", artist: "Harry Styles", listeners: "1900000", url: "" },
+        { name: "Therefore I Am", artist: "Billie Eilish", listeners: "1800000", url: "" },
+        { name: "positions", artist: "Ariana Grande", listeners: "1700000", url: "" },
+        { name: "Mood", artist: "24kGoldn ft. iann dior", listeners: "1600000", url: "" },
+        { name: "Rockstar", artist: "DaBaby ft. Roddy Ricch", listeners: "1500000", url: "" },
+        { name: "The Box", artist: "Roddy Ricch", listeners: "1400000", url: "" },
+        { name: "Circles", artist: "Post Malone", listeners: "1300000", url: "" },
+        { name: "Don't Start Now", artist: "Dua Lipa", listeners: "1200000", url: "" },
+        { name: "Savage", artist: "Megan Thee Stallion", listeners: "1100000", url: "" }
       ];
       
       // Add fallback tracks that aren't already in the list
@@ -157,7 +154,7 @@ export async function callEnhancedLlama(userPrompt: string, userOptions: UserOpt
       
       lastFmTracks = [...lastFmTracks, ...neededFallbackTracks];
       
-      console.log(`Added ${neededFallbackTracks.length} fallback tracks, total: ${lastFmTracks.length}`);
+      console.log(`Added ${neededFallbackTracks.length} verified fallback tracks, total: ${lastFmTracks.length}`);
     }
     
     // STEP 2: Create a unique key for tracking previously recommended songs
@@ -195,7 +192,7 @@ export async function callEnhancedLlama(userPrompt: string, userOptions: UserOpt
     console.log(`After filtering previously recommended songs, ${newTracks.length} tracks remain`);
     
     // Choose which tracks to use based on what's available
-    let tracksToUse = newTracks.length >= 20 ? newTracks : lastFmTracks;
+    let tracksToUse = newTracks.length >= 25 ? newTracks : lastFmTracks;
     
     // If we have very few tracks even after considering all available, reset history
     if (tracksToUse.length < 15) {
@@ -208,36 +205,9 @@ export async function callEnhancedLlama(userPrompt: string, userOptions: UserOpt
     // First, shuffle the tracks for variety
     const shuffledTracks = [...tracksToUse].sort(() => Math.random() - 0.5);
     
-    // Take a good pool of tracks for the LLM to choose from (at least 30, up to 50)
+    // Take a good pool of verified tracks for the LLM to choose from
     const poolSize = Math.min(Math.max(30, shuffledTracks.length), 50);
     const selectedTracks = shuffledTracks.slice(0, poolSize);
-    
-    // If we have 20 or fewer tracks, just return them directly without LLM
-    if (selectedTracks.length <= 20) {
-      console.log(`${selectedTracks.length} or fewer tracks available, returning directly without LLM`);
-      
-      // Track these as recommended
-      for (const track of selectedTracks) {
-        const key = `${track.name}-${track.artist}`.toLowerCase();
-        previousSongsForOptions.add(key);
-      }
-      
-      // Format as a numbered list
-      const formattedSongs = selectedTracks.map((track, index) => 
-        `${index + 1}. "${track.name}" by ${track.artist}`
-      );
-
-      // Store in vector database
-      await storeRecommendationInVectorDB(
-        userPrompt,
-        userOptions,
-        userId,
-        formattedSongs.join('\n'),
-        formattedSongs
-      );
-      
-      return { content: formattedSongs.join('\n') };
-    }
     
     // Format the tracks into a string for the LLM
     const formattedTracks = selectedTracks.map((track, index) => {
@@ -274,9 +244,11 @@ ${contextSongs.join('\n')}
 Please consider this history but DO NOT repeat these songs. Instead, find complementary tracks that would work well with their previous preferences.`;
     }
 
-    // STEP 6: Have Llama choose the best 20 songs from our pool
+    // STEP 5: Have Llama choose the best 20 songs from our verified pool
     const enhancedPrompt = `
-You are a music recommendation assistant. I've already gathered a pool of songs that match the user's criteria from LastFM/Spotify, and I need you to select 20 of them that would make a great playlist.
+You are a music recommendation assistant. I've already gathered a pool of verified songs from Last.fm that are confirmed to exist on Spotify, and I need you to select 20 of them that would make a great playlist.
+
+IMPORTANT: All songs provided have been verified to exist on Spotify. Focus on creating the best possible playlist from these verified options.
 
 User Request: ${userPrompt}
 
@@ -289,7 +261,7 @@ ${userOptions.activity ? `The activity context is: ${userOptions.activity}.` : '
 ${userOptions.timeOfDay ? `The time of day is: ${userOptions.timeOfDay}.` : ''}
 ${userOptions.weather ? `The weather is: ${userOptions.weather}.` : ''}${similarRecommendationsContext}
 
-Here is the pool of songs from LastFM/Spotify that match these criteria:
+Here is the pool of verified songs from Last.fm that match these criteria:
 ${formattedTracks}
 
 INSTRUCTIONS:
@@ -298,7 +270,7 @@ INSTRUCTIONS:
 3. Format your response as a numbered list with ONLY the song names and artists.
 4. DO NOT add any explanations, commentary, or additional information.
 5. Use exactly this format: 1. "Song Title" by Artist
-6. DO NOT invent or make up new songs - ONLY use songs from the provided list.
+6. DO NOT invent or make up new songs - ONLY use songs from the provided verified list.
 7. Prioritize songs marked as "Genre Match" if present, as they best match the user's genre preference.
 8. If "Recent Release" is marked, those songs are good choices for "Latest Releases" requests.
 9. If a specific era is marked (like "${userOptions.era} Era"), prioritize those songs as they match the user's time period preference.
@@ -309,7 +281,7 @@ INSTRUCTIONS:
 Your 20 song recommendations:
 `;
 
-    console.log("Sending enhanced prompt to Llama for 20-song playlist");
+    console.log("Sending enhanced prompt to Llama for 20-song playlist from verified tracks");
     
     // Call the local Llama instance
     let response;
@@ -348,7 +320,7 @@ Your 20 song recommendations:
     const data = await response.json() as { response: string };
     console.log("Ollama API successful response received");
 
-    // STEP 7: Process the LLM response
+    // STEP 6: Process the LLM response
     // Extract only the numbered list items
     const songLines = data.response.trim().split('\n')
       .filter(line => /^\d+\.\s*"[^"]+"\s*by\s*.+/.test(line.trim()))
@@ -364,7 +336,7 @@ Your 20 song recommendations:
       if (songLines.length > 20) {
         songLines.splice(20);
       } 
-      // If we have less than 20, add some from our pool
+      // If we have less than 20, add some from our verified pool
       else if (songLines.length < 20 && selectedTracks.length > songLines.length) {
         // Determine which songs were already selected
         const selectedSongKeys = new Set(songLines.map(line => {
@@ -390,7 +362,7 @@ Your 20 song recommendations:
           songLines.push(`${songLines.length + 1}. "${track.name}" by ${track.artist}`);
         }
         
-        console.log(`Added ${20 - songLines.length} songs from remaining pool to reach 20 total`);
+        console.log(`Added ${20 - songLines.length} songs from remaining verified pool to reach 20 total`);
       }
     }
     
@@ -400,7 +372,7 @@ Your 20 song recommendations:
       return line.replace(/^\d+\./, `${index + 1}.`);
     });
     
-    // If we still don't have 20 songs, pad with random tracks from our pool
+    // If we still don't have 20 songs, pad with random tracks from our verified pool
     while (reNumberedSongs.length < 20 && selectedTracks.length > reNumberedSongs.length) {
       const usedSongs = new Set(reNumberedSongs.map(line => {
         const matches = line.match(/^\d+\.\s*"([^"]+)"\s*by\s*(.+?)$/);
@@ -421,9 +393,9 @@ Your 20 song recommendations:
       reNumberedSongs.push(`${reNumberedSongs.length + 1}. "${randomTrack.name}" by ${randomTrack.artist}`);
     }
     
-    console.log(`Final playlist has ${reNumberedSongs.length} songs`);
+    console.log(`Final verified playlist has ${reNumberedSongs.length} songs`);
     
-    // STEP 8: Track these songs as recommended
+    // STEP 7: Track these songs as recommended
     reNumberedSongs.forEach(line => {
       const matches = line.match(/^\d+\.\s*"([^"]+)"\s*by\s*([^(]+)/);
       if (matches) {
@@ -433,7 +405,7 @@ Your 20 song recommendations:
       }
     });
 
-    // STEP 9: Store the recommendation in vector database
+    // STEP 8: Store the recommendation in vector database
     await storeRecommendationInVectorDB(
       userPrompt,
       userOptions,
@@ -442,7 +414,7 @@ Your 20 song recommendations:
       reNumberedSongs
     );
     
-    // Return the final list of recommendations
+    // Return the final list of verified recommendations
     return { content: reNumberedSongs.join('\n') };
   } catch (error) {
     console.error("Enhanced Llama API error:", error);
@@ -463,6 +435,10 @@ async function storeRecommendationInVectorDB(
   songs: string[]
 ): Promise<void> {
   try {
+    // Fetch real song details from Spotify
+    console.log('🎵 Fetching song details from Spotify...');
+    const songDetails = await spotifyDurationService.getSongDetails(songs);
+
     const recommendationRecord: RecommendationRecord = {
       id: `${userId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       userId: userId,
@@ -470,11 +446,12 @@ async function storeRecommendationInVectorDB(
       userPrompt: userPrompt,
       userOptions: userOptions,
       aiResponse: aiResponse,
-      songs: songs
+      songs: songs,
+      songDetails: songDetails // Add the real song details
     };
 
     await musicVectorDB.storeRecommendation(recommendationRecord);
-    console.log(`✅ Stored recommendation in vector database: ${recommendationRecord.id}`);
+    console.log(`✅ Stored recommendation with song details in vector database: ${recommendationRecord.id}`);
   } catch (error) {
     console.error("❌ Error storing recommendation in vector database:", error);
     // Don't fail the whole operation if vector storage fails

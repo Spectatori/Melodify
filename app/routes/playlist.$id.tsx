@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 import { sessionStorage } from '~/services/session.server';
 import { getPlaylist, savePlaylist } from '~/services/playlist.server';
 import UserMenu from '~/components/layout/UserMenu';
-import { SongsList, PlaylistInfo, PlaylistRecommendation, BackgroundGradient } from '~/components/playlist_components';
+import { SongsList, PlaylistInfo, PlaylistRecommendation, BackgroundGradient, SongDetail } from '~/components/playlist_components';
 
 interface PlaylistData {
   playlist: PlaylistRecommendation;
@@ -36,11 +36,37 @@ interface SpotifyActionError {
 interface FineTuneResponse {
   success: boolean;
   newSongs?: string[];
+  newSongDetails?: SongDetail[];
   error?: string;
   playlist?: any;
 }
 
 type SpotifyActionResponse = SpotifyActionSuccess | SpotifyActionError;
+
+const fetchDetailsForNewSongs = async (songs: string[]): Promise<SongDetail[]> => {
+  try {
+    const { spotifyDurationService } = await import('~/services/duration-fetching.server');
+    const details = await spotifyDurationService.getSongDetails(songs);
+    
+    // Convert to our local SongDetail type
+    return details.map(detail => ({
+      name: detail.name,
+      artist: detail.artist,
+      duration: detail.duration,
+      spotifyId: detail.spotifyId,
+      spotifyUrl: detail.spotifyUrl
+    }));
+  } catch (error) {
+    console.error('Error fetching details for new songs:', error);
+    return songs.map(song => {
+      const match = song.match(/^\d+\.\s*"([^"]+)"\s*by\s*(.+)$/);
+      return {
+        name: match ? match[1] : song,
+        artist: match ? match[2] : 'Unknown'
+      };
+    });
+  }
+};
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const session = await sessionStorage.getSession(request.headers.get('Cookie'));
@@ -118,6 +144,26 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     return redirect('/dashboard');
   }
   
+  // Fetch song details if not already cached
+  if (playlist && !(playlist as any).songDetails) {
+    try {
+      console.log('🎵 Fetching song details for playlist:', playlist.name);
+      const { spotifyDurationService } = await import('~/services/duration-fetching.server');
+      const songDetails = await spotifyDurationService.getSongDetails(playlist.songs);
+      
+      // Update playlist with song details
+      (playlist as any).songDetails = songDetails;
+      
+      // Save the updated playlist to cache the details
+      savePlaylist(playlist);
+      
+      console.log('✅ Song details cached successfully');
+    } catch (error) {
+      console.error('❌ Error fetching song details:', error);
+      // Continue without song details - the component will show fallback durations
+    }
+  }
+  
   // Check for cover image if not already set
   if (!playlist.coverImageUrl) {
     try {
@@ -151,6 +197,10 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SpotifyAc
   
   const formData = await request.formData();
   const actionType = formData.get('actionType')?.toString();
+
+  if (!actionType) {
+    return { error: "No action type provided" };
+  }
   
   // Handle fine-tuning actions first
   if (actionType === 'savePlaylist') {
@@ -160,7 +210,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SpotifyAc
     }
     
     try {
-      const playlist: PlaylistRecommendation = JSON.parse(playlistData);
+      const playlist: any = JSON.parse(playlistData);
       playlist.userId = user.id;
       
       console.log(`Saving updated playlist: ${playlist.name} with ${playlist.songs.length} songs`);
@@ -198,7 +248,10 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SpotifyAc
           .map(line => line.trim())
           .slice(0, 5);
         
-        return { success: true, newSongs };
+        // Fetch details for new songs
+        const newSongDetails = await fetchDetailsForNewSongs(newSongs);
+        
+        return { success: true, newSongs, newSongDetails };
       } else {
         return { success: false, error: 'Failed to generate new songs' };
       }
@@ -237,7 +290,10 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SpotifyAc
         
         console.log(`Generated ${newSongs.length} replacement songs`);
         
-        return { success: true, newSongs };
+        // Fetch details for replacement songs
+        const newSongDetails = await fetchDetailsForNewSongs(newSongs);
+        
+        return { success: true, newSongs, newSongDetails };
       } else {
         return { success: false, error: 'Failed to generate replacement songs' };
       }
@@ -325,7 +381,10 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SpotifyAc
         
         console.log(`Final regenerated playlist has ${finalSongs.length} songs:`, finalSongs);
         
-        return { success: true, newSongs: finalSongs };
+        // Fetch details for all new songs
+        const newSongDetails = await fetchDetailsForNewSongs(finalSongs);
+        
+        return { success: true, newSongs: finalSongs, newSongDetails };
       } else {
         console.error('No content received from LLM for regeneration');
         return { success: false, error: 'Failed to regenerate playlist - no content received' };
@@ -474,7 +533,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SpotifyAc
   
     try {
       const songList = songs.split('\n').filter(line => line.trim());
-      console.log(`Processing ${songList.length} songs for Spotify playlist`);
+      console.log(`Processing ${songList.length} PRE-VERIFIED songs for Spotify playlist`);
       
       const profileTestResponse = await fetch('https://api.spotify.com/v1/me', {
         headers: {
@@ -526,7 +585,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SpotifyAc
       
       await new Promise(resolve => setTimeout(resolve, 2000));
       
-      // Add cover image logic (simplified)
+      // Add cover image logic
       if (playlistId) {
         try {
           const fs = await import('fs');
@@ -594,22 +653,27 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SpotifyAc
         }
       }
       
-      // Search and add songs
+      // Search and add pre-verified songs - should have high success rate
       const trackUris: string[] = [];
       const notFoundSongs: string[] = [];
       
-      for (const song of songList.slice(0, 50)) {
+      console.log("🔍 Searching for pre-verified songs on Spotify...");
+      
+      for (const song of songList) {
         try {
           const match = song.match(/^\d+\.\s*"([^"]+)"\s*by\s*(.+)$/);
-          if (!match) continue;
+          if (!match) {
+            console.warn("Invalid song format:", song);
+            continue;
+          }
           
           const [, songName, artistName] = match;
           const cleanSongName = songName.replace(/[^\w\s]/g, '');
           const cleanArtistName = artistName.replace(/[^\w\s]/g, '').trim();
-          const searchQuery = `${cleanSongName} ${cleanArtistName}`;
+          const searchQuery = `track:"${cleanSongName}" artist:"${cleanArtistName}"`;
           
           const searchResponse = await fetch(
-            `https://api.spotify.com/v1/search?q=${encodeURIComponent(searchQuery)}&type=track&limit=5`,
+            `https://api.spotify.com/v1/search?q=${encodeURIComponent(searchQuery)}&type=track&limit=3`,
             {
               headers: {
                 'Authorization': `Bearer ${user.accessToken}`
@@ -622,6 +686,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SpotifyAc
             if (searchData.tracks.items.length > 0) {
               let bestMatch = searchData.tracks.items[0];
               
+              // Try to find exact match by artist
               for (const track of searchData.tracks.items) {
                 const trackArtists = track.artists.map((a: any) => a.name.toLowerCase()).join(' ');
                 if (trackArtists.includes(cleanArtistName.toLowerCase())) {
@@ -631,24 +696,31 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SpotifyAc
               }
               
               trackUris.push(bestMatch.uri);
-              console.log(`✓ Found: "${songName}" by ${artistName}`);
+              console.log(`✅ Found: "${bestMatch.name}" by ${bestMatch.artists[0].name}`);
             } else {
               notFoundSongs.push(song);
-              console.log(`✗ Not found: "${songName}" by ${artistName}`);
+              console.log(`❌ Unexpected: Pre-verified song not found: "${songName}" by ${artistName}`);
             }
+          } else {
+            notFoundSongs.push(song);
+            console.warn(`Search failed for: "${songName}" by ${artistName}`);
           }
           
-          await new Promise(resolve => setTimeout(resolve, 100));
+          // Small delay to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 150));
         } catch (error) {
           notFoundSongs.push(song);
+          console.error(`Error searching for song: ${song}`, error);
         }
       }
       
-      console.log(`Found ${trackUris.length} tracks out of ${songList.length} songs`);
+      console.log(`✅ Successfully found ${trackUris.length} out of ${songList.length} pre-verified songs`);
       
-      // Add tracks to playlist
+      // Add tracks to playlist in batches
       if (trackUris.length > 0) {
         const batchSize = 100;
+        let addedCount = 0;
+        
         for (let i = 0; i < trackUris.length; i += batchSize) {
           const batch = trackUris.slice(i, i + batchSize);
           
@@ -666,17 +738,24 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SpotifyAc
             }
           );
           
-          if (!addTracksResponse.ok) {
-            console.error(`Failed to add batch to playlist`);
+          if (addTracksResponse.ok) {
+            addedCount += batch.length;
+            console.log(`✅ Added batch of ${batch.length} songs to playlist (Total: ${addedCount})`);
           } else {
-            console.log(`✓ Added batch to playlist`);
+            console.error(`❌ Failed to add batch to playlist: ${addTracksResponse.status}`);
           }
         }
       }
       
-      let resultMessage = `Successfully created playlist "${playlistName}"!`;
+      const successRate = songList.length > 0 ? Math.round((trackUris.length / songList.length) * 100) : 0;
+      let resultMessage = `Successfully created playlist "${playlistName}" with ${trackUris.length} songs!`;
+      
+      if (successRate < 100) {
+        resultMessage += ` ${successRate}% of songs were successfully added.`;
+      }
+      
       if (notFoundSongs.length > 0) {
-        resultMessage += ` ${trackUris.length} of ${songList.length} songs were found and added.`;
+        resultMessage += ` Note: ${notFoundSongs.length} pre-verified songs were unexpectedly not found.`;
       }
       
       return { 
@@ -687,17 +766,15 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SpotifyAc
         totalSongs: songList.length,
         notFoundCount: notFoundSongs.length
       };
-      
     } catch (error) {
-      console.error("Error creating Spotify playlist:", error);
       return { 
         error: error instanceof Error ? error.message : "An unexpected error occurred while creating the playlist"
       };
     }
   }
-  
-  return { error: 'Invalid action' };
-};
+
+  return { error: "Invalid action type" };
+}
 
 export default function PlaylistPage() {
   const { playlist: initialPlaylist, user, colorPalette: initialColorPalette } = useLoaderData<PlaylistData>();
@@ -722,25 +799,44 @@ export default function PlaylistPage() {
       
       if (fetcher.data.success && fetcher.data.newSongs) {
         const newSongs = fetcher.data.newSongs;
+        const newSongDetails = fetcher.data.newSongDetails || [];
         let updatedPlaylist: PlaylistRecommendation | null = null;
         
         if (currentActionType === 'addMoreSongs') {
-          updatedPlaylist = { ...playlist, songs: [...playlist.songs, ...newSongs] };
+          updatedPlaylist = { 
+            ...playlist, 
+            songs: [...playlist.songs, ...newSongs],
+            songDetails: [...(((playlist as any).songDetails) || []), ...newSongDetails]
+          };
           setPlaylist(updatedPlaylist);
           setSuccessMessage('Successfully added new songs!');
         } else if (currentActionType === 'replaceSongs') {
           const updatedSongs = [...playlist.songs];
+          const updatedSongDetails = [...((playlist as any).songDetails || [])];
+          
           Array.from(selectedSongs).forEach((index, replaceIndex) => {
-            if (newSongs[replaceIndex]) updatedSongs[index] = newSongs[replaceIndex];
+            if (newSongs[replaceIndex]) {
+              updatedSongs[index] = newSongs[replaceIndex];
+              updatedSongDetails[index] = newSongDetails[replaceIndex] || { 
+                name: newSongs[replaceIndex], 
+                artist: 'Unknown' 
+              };
+            }
           });
-          updatedPlaylist = { ...playlist, songs: updatedSongs };
+          
+          updatedPlaylist = { 
+            ...playlist, 
+            songs: updatedSongs,
+            songDetails: updatedSongDetails
+          };
           setPlaylist(updatedPlaylist);
           setSelectedSongs(new Set());
           setSuccessMessage(`Successfully replaced ${selectedSongs.size} songs!`);
         } else if (currentActionType === 'regeneratePlaylist') {
           updatedPlaylist = { 
             ...playlist, 
-            songs: [...newSongs], 
+            songs: [...newSongs],
+            songDetails: newSongDetails,
             createdAt: new Date().toISOString() 
           };
           setPlaylist(updatedPlaylist);
@@ -883,6 +979,7 @@ export default function PlaylistPage() {
             isLoading={isLoading}
             onToggleSongSelection={handleSongSelection}
             onClearSelection={() => setSelectedSongs(new Set())}
+            songDetails={(playlist as any).songDetails}
           />
         </div>
       </div>

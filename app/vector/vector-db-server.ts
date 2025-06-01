@@ -27,6 +27,13 @@ interface RecommendationRecord {
   };
   aiResponse: string;
   songs: string[];
+  songDetails?: Array<{
+    name: string;
+    artist: string;
+    duration?: number;
+    spotifyId?: string;
+    spotifyUrl?: string;
+  }>;
   playlistId?: string;
   feedback?: {
     liked: boolean;
