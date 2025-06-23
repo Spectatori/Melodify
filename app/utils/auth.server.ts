@@ -18,11 +18,17 @@ function validateEnvironmentVars() {
 
 const { SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_CALLBACK_URL } = validateEnvironmentVars();
 
+// UPDATED: Added playlist creation and management scopes + IMAGE UPLOAD
 const spotifyScopes = [
   'user-read-email',
   'user-read-private',
   'playlist-modify-public',
   'playlist-modify-private',
+  'playlist-read-private',
+  'playlist-read-collaborative',
+  'user-library-read',
+  'user-library-modify',
+  'ugc-image-upload'
 ];
 
 const spotifyStrategy = new SpotifyStrategy(
@@ -31,7 +37,7 @@ const spotifyStrategy = new SpotifyStrategy(
     clientSecret: SPOTIFY_CLIENT_SECRET,
     callbackURL: SPOTIFY_CALLBACK_URL,
     sessionStorage,
-    scope: spotifyScopes.join(' '),
+    scope: spotifyScopes.join(' '), // IMPORTANT: Join scopes with spaces
   },
   async ({ accessToken, refreshToken, extraParams, profile }) => {
     const expirationTime = Date.now() + (extraParams.expiresIn ?? 3600) * 1000;
