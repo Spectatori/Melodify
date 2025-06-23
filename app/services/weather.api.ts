@@ -1,4 +1,3 @@
-// src/utils/weatherApi.ts
 export interface WeatherResponse {
     temperature: number;
     condition: string;

@@ -22,13 +22,13 @@ const { SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_CALLBACK_URL } = valid
 const spotifyScopes = [
   'user-read-email',
   'user-read-private',
-  'playlist-modify-public',    // REQUIRED: Create and modify public playlists
-  'playlist-modify-private',   // REQUIRED: Create and modify private playlists
-  'playlist-read-private',     // REQUIRED: Read user's private playlists
-  'playlist-read-collaborative', // REQUIRED: Read collaborative playlists
-  'user-library-read',         // Optional: Read user's saved tracks
-  'user-library-modify',       // Optional: Modify user's saved tracks
-  'ugc-image-upload'           // REQUIRED: Upload custom images to playlists
+  'playlist-modify-public',
+  'playlist-modify-private',
+  'playlist-read-private',
+  'playlist-read-collaborative',
+  'user-library-read',
+  'user-library-modify',
+  'ugc-image-upload'
 ];
 
 const spotifyStrategy = new SpotifyStrategy(

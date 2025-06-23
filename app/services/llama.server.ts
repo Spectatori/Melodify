@@ -447,7 +447,7 @@ async function storeRecommendationInVectorDB(
       userOptions: userOptions,
       aiResponse: aiResponse,
       songs: songs,
-      songDetails: songDetails // Add the real song details
+      songDetails: songDetails
     };
 
     await musicVectorDB.storeRecommendation(recommendationRecord);
